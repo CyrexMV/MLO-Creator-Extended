@@ -1,0 +1,18 @@
+# what the program makes next to itself while it runs (your projects, exports, settings, caches, logs)
+projects/
+output/
+Exports/
+cache/
+logs/
+settings.json
+
+# what build.ps1 and package.ps1 make (build them again from the source)
+*.exe
+*.exe.config
+dist/
+
+# editor / OS
+.vs/
+.vscode/
+Thumbs.db
+desktop.ini
