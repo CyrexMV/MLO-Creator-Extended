@@ -1,6 +1,5 @@
 name: Fehlerbericht
 description: Melde einen Fehler im Projekt
- title: ""
 labels: ["bug"]
 body:
   - type: markdown
@@ -65,6 +64,8 @@ body:
       description: Falls vorhanden, bitte relevante Fehlermeldungen oder Logs einfügen.
       placeholder: |
         Fehlertext / Stacktrace / relevante Logs
+    validations:
+      required: false
 
   - type: textarea
     id: additional
