@@ -1,0 +1,45 @@
+name: Feature Anfrage
+description: Schlage ein neues Feature oder eine Verbesserung vor.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Danke für deinen Vorschlag. Bitte beschreibe das gewünschte Feature so konkret wie möglich.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Kurzbeschreibung
+      description: Eine kurze Zusammenfassung der Idee.
+      placeholder: z. B. Mehr Garage-Tor-Modelle im Editor
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem oder Nutzen
+      description: Welches Problem löst das Feature oder was ist der gewünschte Nutzen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Vorschlag zur Umsetzung
+      description: Wie könnte die Funktion in der Praxis aussehen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativen
+      description: Gibt es bereits Alternativen oder Workarounds?
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Zusätzliche Informationen
+      description: Screenshots, Referenzen oder weitere Hinweise.
