@@ -1,0 +1,73 @@
+name: Fehlerbericht
+description: Melde einen Fehler im Projekt
+ title: ""
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Danke, dass du einen Fehler meldest. Bitte fülle die Felder so genau wie möglich aus.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Kurzbeschreibung
+      description: Eine kurze, verständliche Zusammenfassung des Problems.
+      placeholder: z. B. Garagentor öffnet sich nicht wie erwartet
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Schritte zum Reproduzieren
+      description: Bitte so detailliert wie möglich beschreiben.
+      placeholder: |
+        1. Öffne das Projekt
+        2. Wähle ...
+        3. Klicke ...
+        4. Fehler tritt auf
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Erwartetes Verhalten
+      description: Was sollte laut deiner Erwartung passieren?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Aktuelles Verhalten
+      description: Was passiert tatsächlich?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / Build
+      placeholder: z. B. 1.4.0 oder aktueller Build
+
+  - type: input
+    id: environment
+    attributes:
+      label: Umgebung
+      placeholder: z. B. Windows 11, 64 Bit
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Fehlermeldungen
+      description: Falls vorhanden, bitte relevante Fehlermeldungen oder Logs einfügen.
+      placeholder: |
+        Fehlertext / Stacktrace / relevante Logs
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Zusätzliche Informationen
+      description: Screenshots, Hinweise, Notizen oder Kontext.
