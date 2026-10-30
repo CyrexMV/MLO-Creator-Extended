@@ -1,9 +1,10 @@
 ---
 name: Fehlerbericht
 about: Melde einen Fehler im Projekt
-title: ""
-labels: ["bug"]
-assignees: ""
+title: ''
+labels: bug
+assignees: ''
+
 ---
 
 ## Kurzbeschreibung
