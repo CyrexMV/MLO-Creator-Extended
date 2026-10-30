@@ -74,7 +74,7 @@ window.MLO = window.MLO || {};
     function build(project, opts) {
         opts = opts || {};
         const S = project.shell, cfg = project.settings, D = project.defaults;
-        const H = cfg.ceilH, depth = cfg.wallDepth, PT = cfg.partT;
+        const H = cfg.ceilH, depth = cfg.wallDepth, PT = cfg.partT, floorSurfaceZ = 0.003;
         const exportMode = opts.mode === 'export';
         // several floors (levels): `shared` = this floor makes what belongs to the whole building (the openings cut from the model, the collision boxes, the solid
         // doors); `rise` = how far up the floor above is (its stairs go that high); `holesBelow` = the stairs of the floor below, which come up through this floor
@@ -142,6 +142,13 @@ window.MLO = window.MLO || {};
             if (mi === undefined) { mi = matList.length; matList.push([type, room]); matIdx.set(mk, mi); }
             boxes.push([x0, y0, z0, x1, y1, z1, mi]);
         }
+        // collision faces of their own (a stair's ramp): both sides of a quad, [a, b, c, material] each
+        const cpolys = [];
+        function cquad(a, b, c, d, type, room) {
+            if (!wantBoxes) return; const mk = type + '|' + room; let mi = matIdx.get(mk);
+            if (mi === undefined) { mi = matList.length; matList.push([type, room]); matIdx.set(mk, mi); }
+            cpolys.push([a, b, c, mi], [c, d, a, mi], [a, c, b, mi], [c, a, d, mi]);
+        }
         // a collision box that is turned about Z (the ones the user draws): the first six numbers are the box around it, the eighth says how it really stands
         function cboxO(cx, cy, z0, z1, hu, hn, yaw, type, room, id) {
             if (!wantBoxes) return;
@@ -174,7 +181,7 @@ window.MLO = window.MLO || {};
                 let j1 = j + 1; for (; j1 < g.ny; j1++) { let ok = true; for (let x = i; x < i1; x++) if (used[x][j1] || texOf(x, j1) !== key) { ok = false; break; } if (!ok) break; }
                 for (let x = i; x < i1; x++) for (let y = j; y < j1; y++) used[x][y] = true;
                 const x0 = g.X[i], x1 = g.X[i1], y0 = g.Y[j], y1 = g.Y[j1];
-                if (!noFloor) { pq('floor', 'int', tex, false, 'z', 0, x0, x1, y0, y1, 1); cbox(x0, y0, -0.35, x1, y1, 0, TEX.colType(tex), 1); }
+                if (!noFloor) { pq('floor', 'int', tex, false, 'z', floorSurfaceZ, x0, x1, y0, y1, 1); cbox(x0, y0, -0.35, x1, y1, 0, TEX.colType(tex), 1); }
                 if (!noCeil && !roofFn) { pq('roof', 'int', D.ceiling, false, 'z', H, x0, x1, y0, y1, -1); cbox(x0, y0, H, x1, y1, H + 0.1, 101, 0); }
             });
         }
@@ -210,6 +217,79 @@ window.MLO = window.MLO || {};
         // A stair is a rectangle (r) and the way it goes up (dir: '+x', '-x', '+y', '-y'); its steps are solid blocks of about 18 cm, each one a collision box,
         // up to the floor above (without one: up to the ceiling). The ceiling has a hole over it, the floor above has a hole where it comes up (holesBelow).
         const stairTex = D.stair || D.floor, stepRise = 0.18;
+        // A stair's shape (st.kind): 'straight', 'l' (two flights round a landing in the far corner), 'u' (up one side, a landing across the far end, back up
+        // the other side) or 'spiral' (round a post in the middle). st.turn 'r' turns right instead of left; st.open: treads on stringers instead of solid steps;
+        // st.step: the height of a step (15 to 22 cm, 18 when not set); st.w: the width of a flight of an L or U stair; st.rail: handrails on the flights.
+        // The collision is solid under every step (a turned box for each step of a spiral), so it can be walked up.
+        function buildStair(st, up) {
+            const r = st.r, d = st.dir, A = d[1] === 'x' ? r[2] - r[0] : r[3] - r[1], B = d[1] === 'x' ? r[3] - r[1] : r[2] - r[0], ct = TEX.colType(stairTex);
+            const n = Math.max(2, Math.round(up / Math.min(0.22, Math.max(0.15, st.step || stepRise)))), sh = up / n, flip = st.turn === 'r', open = !!st.open;
+            // the stair's own frame: u along the way up (0..A), v across it (0..B, to the left of the way up; mirrored for a right turn)
+            const W = (u, v) => { if (flip) v = B - v; return d === '+x' ? [r[0] + u, r[1] + v] : d === '-x' ? [r[2] - u, r[3] - v] : d === '+y' ? [r[2] - v, r[1] + u] : [r[0] + v, r[3] - u]; };
+            const ext = (u0, v0, u1, v1) => { const p = W(u0, v0), q = W(u1, v1); return [Math.min(p[0], q[0]), Math.min(p[1], q[1]), Math.max(p[0], q[0]), Math.max(p[1], q[1])]; };
+            const lbox = (u0, v0, z0, u1, v1, z1, tex) => { const e = ext(u0, v0, u1, v1); box('floor', 'int', tex || stairTex, e[0], e[1], z0, e[2], e[3], z1); };
+            const lcol = (u0, v0, u1, v1, z1) => { const e = ext(u0, v0, u1, v1); cbox(e[0], e[1], 0, e[2], e[3], z1, ct, 1); };
+            // a step's box: for the walk test of the editor; the game walks on the ramps below (people catch on the edges of boxes, as on no stair of the game)
+            const scol = (u0, v0, u1, v1, z1) => { const n0 = boxes.length; lcol(u0, v0, u1, v1, z1); if (boxes.length > n0) boxes[n0][7] = Object.assign(boxes[n0][7] || {}, { stair: true }); };
+            const P3 = (u, v, z) => { const w = W(u, v); return [w[0], w[1], z]; };
+            // a flight's ramp: from half a step over the floor at its start, through the middle of every tread, flat over the last half tread
+            const ramp = (u0, v0, u1, v1, along, back, k0, cnt) => {
+                if (cnt <= 0) return; const L = (along === 'u' ? u1 - u0 : v1 - v0), len = L / cnt, z0 = (k0 - 0.5) * sh, zt = (k0 + cnt - 1) * sh;
+                const at = (s, w) => { const a = along === 'u' ? (back ? u1 - s : u0 + s) : (back ? v1 - s : v0 + s); return along === 'u' ? P3(a, v0 + (v1 - v0) * w, 0) : P3(u0 + (u1 - u0) * w, a, 0); };
+                const Q = (s, w, z) => { const p = at(s, w); p[2] = z; return p; }, s1 = L - len / 2;
+                cquad(Q(0, 0, z0), Q(s1, 0, zt), Q(s1, 1, zt), Q(0, 1, z0), ct, 1); cquad(Q(s1, 0, zt), Q(L, 0, zt), Q(L, 1, zt), Q(s1, 1, zt), ct, 1);
+            };
+            const rail = (u0, v0, u1, v1, top, post) => {                      // a piece of handrail 90 cm over a tread, with a post at its start
+                if (post) { const pu = u0 + (u1 - u0) * 0.5, pv = v0 + (v1 - v0) * 0.5; lbox(pu - 0.02, pv - 0.02, top, pu + 0.02, pv + 0.02, top + 0.9, D.trim); }
+                lbox(u0, v0, top + 0.86, u1, v1, top + 0.9, D.trim);
+            };
+            // one step (k: 1 for the lowest) over [u0,u1] x [v0,v1]
+            const step = (u0, v0, u1, v1, k) => { const top = k * sh; lbox(u0, v0, open ? top - 0.05 : 0, u1, v1, top); scol(u0, v0, u1, v1, top); };
+            // a flight: cnt steps along u (or v), from u0 up to u1 (back: from u1 down to u0), the first being step k0; its stringers and rails on both sides
+            const flight = (u0, v0, u1, v1, along, back, k0, cnt) => {
+                if (cnt <= 0) return; const len = ((along === 'u' ? u1 - u0 : v1 - v0)) / cnt; ramp(u0, v0, u1, v1, along, back, k0, cnt);
+                for (let i = 0; i < cnt; i++) {
+                    const a = back ? (along === 'u' ? u1 : v1) - (i + 1) * len : (along === 'u' ? u0 : v0) + i * len, top = (k0 + i) * sh;
+                    if (along === 'u') step(a, v0, a + len, v1, k0 + i); else step(u0, a, u1, a + len, k0 + i);
+                    [0, 1].forEach(side => {
+                        const s0 = along === 'u' ? (side ? v1 - 0.04 : v0) : (side ? u1 - 0.04 : u0), s1 = s0 + 0.04;
+                        if (open) { if (along === 'u') lbox(a, s0, Math.max(0, top - 0.32), a + len, s1, top - 0.05, D.trim); else lbox(s0, a, Math.max(0, top - 0.32), s1, a + len, top - 0.05, D.trim); }
+                        if (st.rail) { if (along === 'u') rail(a, s0, a + len, s1, top, i % 2 === 0); else rail(s0, a, s1, a + len, top, i % 2 === 0); }
+                    });
+                }
+            };
+            const landing = (u0, v0, u1, v1, k) => { const top = k * sh; lbox(u0, v0, open ? top - 0.12 : 0, u1, v1, top); lcol(u0, v0, u1, v1, top); };
+            const kind = st.kind || 'straight';
+            if (kind === 'l' && A > 1.2 && B > 1.2) {
+                const w = Math.max(0.6, Math.min(st.w || 1.0, A - 0.5, B - 0.5)), r1 = A - w, r2 = B - w;
+                let n1 = Math.max(1, Math.round((n - 1) * r1 / (r1 + r2))); if (n - 1 - n1 < 1) n1 = n - 2; const n2 = n - 1 - n1;
+                flight(0, 0, r1, w, 'u', false, 1, n1); landing(r1, 0, A, w, n1 + 1); flight(r1, w, A, B, 'v', false, n1 + 2, n2);
+            } else if (kind === 'u' && A > 1.2 && B > 1.0) {
+                const w = Math.max(0.5, Math.min(st.w || B / 2, B / 2)), run = A - w, n1 = Math.max(1, Math.floor((n - 1) / 2)), n2 = n - 1 - n1;
+                flight(0, 0, run, w, 'u', false, 1, n1); landing(run, 0, A, B, n1 + 1); flight(0, B - w, run, B, 'u', true, n1 + 2, n2);
+            } else if (kind === 'spiral') {
+                // wedges round a post, 6 cm thick, each one a step higher, turning left (right when mirrored) from the side the stairs start on
+                const R = Math.min(A, B) / 2 - 0.02, cu = A / 2, cv = B / 2, ri = 0.08, da = Math.min(0.6, Math.max(0.3, 0.26 / (0.6 * R))), a0 = Math.PI;
+                const P = (a, rr, z) => { const w = W(cu + Math.cos(a) * rr, cv + Math.sin(a) * rr); return [w[0], w[1], z]; };
+                const quad = (p, q, s, t) => flip ? emitQuad('floor', 'int', stairTex, false, p, t, s, q) : emitQuad('floor', 'int', stairTex, false, p, q, s, t);
+                for (let i = 0; i < n; i++) {
+                    const aa = a0 + i * da, ab = aa + da, top = (i + 1) * sh, bot = top - 0.06;
+                    quad(P(aa, ri, top), P(aa, R, top), P(ab, R, top), P(ab, ri, top));                                  // tread
+                    quad(P(aa, ri, bot), P(ab, ri, bot), P(ab, R, bot), P(aa, R, bot));                                  // under it
+                    quad(P(aa, ri, bot), P(aa, R, bot), P(aa, R, top), P(aa, ri, top));                                  // front
+                    quad(P(ab, ri, bot), P(ab, ri, top), P(ab, R, top), P(ab, R, bot));                                  // back
+                    quad(P(aa, R, bot), P(ab, R, bot), P(ab, R, top), P(aa, R, top));                                    // outer edge
+                    const am = (aa + ab) / 2, c = P(am, R * 0.55, 0), t = P(am + 0.01, R * 0.55, 0), n0 = boxes.length;
+                    cboxO(c[0], c[1], 0, top, R * 0.55 * da / 2 + 0.02, R * 0.42, Math.atan2(t[1] - c[1], t[0] - c[0]), ct, 1);
+                    if (boxes.length > n0) boxes[n0][7] = Object.assign(boxes[n0][7] || {}, { stair: true });          // (the walk test's; the game walks on the ramp)
+                    // the ramp: from the middle of this tread to the middle of the next one (from half a step up at the start; flat over the last half tread)
+                    const zA = i === 0 ? sh / 2 : top, zB = i === n - 1 ? top : top + sh, a0r = i === 0 ? aa : am, a1r = i === n - 1 ? ab : am + da;
+                    cquad(P(a0r, ri, zA), P(a0r, R, zA), P(a1r, R, zB), P(a1r, ri, zB), ct, 1);
+                    if (st.rail) { const o = P(am, R - 0.03, 0); box('floor', 'int', D.trim, o[0] - 0.02, o[1] - 0.02, top, o[0] + 0.02, o[1] + 0.02, top + 0.9); }
+                }
+                const pc = W(cu, cv); box('floor', 'int', D.trim, pc[0] - 0.07, pc[1] - 0.07, 0, pc[0] + 0.07, pc[1] + 0.07, up + (st.rail ? 0.9 : 0)); cbox(pc[0] - 0.07, pc[1] - 0.07, 0, pc[0] + 0.07, pc[1] + 0.07, up, ct, 1);
+            } else flight(0, 0, A, B, 'u', false, 1, n);
+        }
         stairs.forEach(st => {
             // the well: the sides of the hole from this ceiling up to the floor above, so you do not look into the space between the floors (and through the
             // building's wall, which is only seen from outside)
@@ -217,13 +297,18 @@ window.MLO = window.MLO || {};
                 const r = st.r; pq('wall', 'int', D.wallInt, false, 'x', r[0], r[1], r[3], H, rise, 1); pq('wall', 'int', D.wallInt, false, 'x', r[2], r[1], r[3], H, rise, -1);
                 pq('wall', 'int', D.wallInt, false, 'y', r[1], H, rise, r[0], r[2], 1); pq('wall', 'int', D.wallInt, false, 'y', r[3], H, rise, r[0], r[2], -1);
             }
-            const r = st.r, up = rise || H, n = Math.max(1, Math.round(up / stepRise)), sh = up / n, alongX = st.dir === '+x' || st.dir === '-x', pos = st.dir[0] === '+';
-            const a0 = alongX ? r[0] : r[1], a1 = alongX ? r[2] : r[3], d = (a1 - a0) / n;
-            for (let i = 0; i < n; i++) {
-                const s0 = pos ? a0 + i * d : a1 - (i + 1) * d, s1 = s0 + d, top = (i + 1) * sh;
-                if (alongX) { box('floor', 'int', stairTex, s0, r[1], 0, s1, r[3], top); cbox(s0, r[1], 0, s1, r[3], top, TEX.colType(stairTex), 1); }
-                else { box('floor', 'int', stairTex, r[0], s0, 0, r[2], s1, top); cbox(r[0], s0, 0, r[2], s1, top, TEX.colType(stairTex), 1); }
-            }
+            buildStair(st, rise || H);
+        });
+        // ---------------- collision for the furniture whose model carries none (a kitchen, a counter, shelves: their collision was in the files of the game's
+        // interior they come from): boxes of the model's shape (PropCollision.cs, in the model's frame) where it stands, turned with it ----------------
+        (S.furniture || []).forEach(f => {
+            const m = M.Furniture && M.Furniture.model ? M.Furniture.model(f.n) : null; if (!m || m.error || m.col !== false || !m.colBoxes) return;
+            const h = (f.h || 0) * Math.PI / 180, c = Math.cos(h), s = Math.sin(h), fz = f.z || 0;
+            m.colBoxes.forEach((q, k) => {
+                const z0 = Math.max(0.02, fz + q[2] - q[5]), z1 = fz + q[2] + q[5]; if (z1 - z0 < 0.03 || q[3] < 0.01 || q[4] < 0.01) return;
+                const before = boxes.length; cboxO(f.x + q[0] * c - q[1] * s, f.y + q[0] * s + q[1] * c, z0, z1, q[3], q[4], h, 70, 1, 'prop:' + f.id + ':' + k);
+                if (boxes.length > before && boxes[before][7]) delete boxes[before][7].user;          // (not one of the user's own boxes)
+            });
         });
         holesBelow.forEach(h => {
             // a railing 1 m high on the sides of the hole that have floor next to them, not on the side the stairs come out on
@@ -247,21 +332,51 @@ window.MLO = window.MLO || {};
         });
 
         // cutters the user placed (imported-model projects) also open the interior walls they pass through
-        const spans = [];
+        const spans = [], slanted = [];
         const fitCut = M.FitModels ? M.FitModels.cutters(project) : [];                                    // placed window and door models (Models tool): they open the walls too
+        const IMx = M.ImportModel, rooms = IMx && IMx.roomRects && project.import ? IMx.roomRects(project) : [];
         (((project.import && project.import.cutters) || []).concat(fitCut)).forEach(k => {
-            const q = (((k.yaw * 180 / Math.PI) % 360) + 360) % 360, r90 = q % 90; if (Math.min(r90, 90 - r90) > (k.face ? 6 : 1.5)) return;      // faces of the model can be a few degrees off the grid
+            const q = (((k.yaw * 180 / Math.PI) % 360) + 360) % 360, r90 = q % 90; if (Math.min(r90, 90 - r90) > (k.face ? 6 : 1.5)) { slanted.push(k); return; }      // faces of the model can be a few degrees off the grid
             const horiz = Math.round(q / 90) % 2 === 0, cu = horiz ? k.cx : k.cy, cn = horiz ? k.cy : k.cx;
             const type = k.face ? k.type : (k.type === 'arch' ? 'arch' : ((k.type === 'window' || (k.type === 'door' && k.zb > 0.3)) ? 'window' : 'door'));
             // (a door with a frame that is bigger than its opening: the walls open to the frame, which is where the model's wall is cut out to as well)
-            const fe = M.ImportModel && M.ImportModel.doorFrameExtent ? M.ImportModel.doorFrameExtent(k) : null, ju = fe ? fe.cu : k.w / 2, zTop = fe ? fe.ct : k.zb + k.h;
-            spans.push({ o: horiz ? 'H' : 'V', u0: cu - ju, u1: cu + ju, n0: cn - k.d / 2, n1: cn + k.d / 2, z0: Math.max(0, k.zb), z1: Math.min(H, zTop), type, id: 'cut' + k.id, face: !!k.face });
+            const fe = IMx && IMx.doorFrameExtent ? IMx.doorFrameExtent(k) : null, ju = fe ? fe.cu : k.w / 2, zTop = fe ? fe.ct : k.zb + k.h;
+            // (an opening in a thick wall reaches the room's wall behind it, not only 40 cm about the faces that were clicked)
+            const rc = IMx && IMx.reach ? IMx.reach(k, rooms) : null;
+            spans.push({ o: horiz ? 'H' : 'V', u0: cu - ju, u1: cu + ju, n0: cn + (rc ? rc.lo : -k.d / 2), n1: cn + (rc ? rc.hi : k.d / 2), z0: Math.max(0, k.zb), z1: Math.min(H, zTop), type, id: 'cut' + k.id, face: !!k.face });
         });
         spans.forEach(sp => segs.forEach(sg => {
             if (sg.o !== sp.o || sg.c < sp.n0 - 0.03 || sg.c > sp.n1 + 0.03) return;
             const u0 = Math.max(sp.u0, sg.u0), u1 = Math.min(sp.u1, sg.u1); if (u1 - u0 < 0.04 || sp.z1 - sp.z0 < 0.1) return;
             sg.ops.push({ u0, u1, z0: sp.z0, z1: sp.z1, type: sp.type, id: sp.id, entrance: false, face: sp.face });
         }));
+
+        // A cutter turned against the grid (a slanted wall of the building, a cut corner): the room's edge there is a staircase of short walls along and across the
+        // grid. Every piece of them inside the cutter's box seen from above is opened: along the wall as wide as the opening, across it from the cutter's front to its
+        // back and 40 cm further on each side (where the steps of the staircase are). Those pieces get no trim; one portal stands in the cutter's own plane.
+        const slantPortals = [];
+        slanted.forEach(k => {
+            const type = k.face ? k.type : (k.type === 'arch' ? 'arch' : ((k.type === 'window' || (k.type === 'door' && k.zb > 0.3)) ? 'window' : 'door'));
+            const fe = M.ImportModel && M.ImportModel.doorFrameExtent ? M.ImportModel.doorFrameExtent(k) : null, ju = fe ? fe.cu : k.w / 2, zTop = fe ? fe.ct : k.zb + k.h;
+            const z0 = Math.max(0, k.zb), z1 = Math.min(H, zTop); if (z1 - z0 < 0.1) return;
+            const ax = Math.cos(k.yaw), ay = Math.sin(k.yaw), nx = -ay, ny = ax, hn = k.d / 2 + 0.4;
+            segs.forEach(sg => {
+                const px = sg.o === 'H' ? sg.u0 : sg.c, py = sg.o === 'H' ? sg.c : sg.u0, dx = sg.o === 'H' ? 1 : 0, dy = 1 - dx;
+                let t0 = 0, t1 = sg.u1 - sg.u0;
+                [[ax, ay, ju], [nx, ny, hn]].forEach(([ex, ey, half]) => {
+                    const p0 = (px - k.cx) * ex + (py - k.cy) * ey, dd = dx * ex + dy * ey;
+                    if (Math.abs(dd) < 1e-9) { if (Math.abs(p0) > half) t1 = -1; return; }
+                    let ta = (-half - p0) / dd, tb = (half - p0) / dd; if (ta > tb) { const t = ta; ta = tb; tb = t; }
+                    t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
+                });
+                if (t1 - t0 < 0.04) return;
+                sg.ops.push({ u0: sg.u0 + t0, u1: sg.u0 + t1, z0, z1, type, id: 'cut' + k.id, entrance: false, face: true, slant: true });
+            });
+            // the portal: across the opening at the cutter's middle, its front facing out of the room
+            const inside = inRegion(k.cx + nx * (k.d / 2 + 0.05), k.cy + ny * (k.d / 2 + 0.05)), ox = inside ? -nx : nx, oy = inside ? -ny : ny, ex = -oy, ey = ox;
+            const a = [k.cx - ex * ju, k.cy - ey * ju], b = [k.cx + ex * ju, k.cy + ey * ju];
+            slantPortals.push({ type, corners: [a[0], a[1], z0, b[0], b[1], z0, b[0], b[1], z1, a[0], a[1], z1] });
+        });
 
         // Wall thickness (into the room): things of the building stick through the wall (frames and vents reach 5 to 10 cm past the wall surface into the room), so the
         // inner face of every wall moves `T` into the room, sg.ci. At a corner of the room the two walls meet at their moved faces: both end T shorter; round a
@@ -336,6 +451,18 @@ window.MLO = window.MLO || {};
 
         segs.forEach(sg => {
             sg.ops.sort((a, b) => a.u0 - b.u0);
+            // Openings that overlap along the wall (a frame placed in an opening that was cut from the faces, a door cut a little wider than its frame) are one
+            // hole: as wide and as high as both together. (Before, the second one was dropped, so the wall stayed shut where only it reached.)
+            const merged = [];
+            sg.ops.forEach(op => {
+                const last = merged[merged.length - 1];
+                if (last && op.u0 < last.u1 - 1e-6) {
+                    last.u1 = Math.max(last.u1, op.u1); last.z0 = Math.min(last.z0, op.z0); last.z1 = Math.max(last.z1, op.z1);
+                    if (last.z0 < 0.05 && last.type === 'window') last.type = 'door';
+                    last.face = last.face && op.face; last.entrance = last.entrance || op.entrance;
+                } else merged.push(Object.assign({}, op));
+            });
+            sg.ops = merged;
             let cur = sg.u0, first = true;
             sg.ops.forEach(op => {
                 op.u0 = Math.max(op.u0, sg.u0); op.u1 = Math.min(op.u1, sg.u1); if (op.u1 - op.u0 < 0.02) return;          // (a wall that was made shorter at a corner keeps the part of an opening that is left)
@@ -345,7 +472,7 @@ window.MLO = window.MLO || {};
                 if (op.z0 > 1e-4) wallPiece(sg, op.u0, op.u1, 0, op.z0, 0, 0);
                 // an opening made from the model's faces has no generated trim: it is only cut through the wall (glass or the door model fill it)
                 // (with a wall thickness the hole has sides, so the reveals are made for those too)
-                if (!op.face || T > 0.0005) {
+                if (!op.slant && (!op.face || T > 0.0005)) {
                     revealQuad(sg, 'u', op.u0, 0, 0, op.z0, op.z1, 1); revealQuad(sg, 'u', op.u1, 0, 0, op.z0, op.z1, -1);
                     revealQuad(sg, 'z', op.z1, op.u0, op.u1, 0, 0, -1); if (op.z0 > 1e-4) revealQuad(sg, 'z', op.z0, op.u0, op.u1, 0, 0, 1);
                     if (!op.face) casing(sg, op.u0, op.u1, op.z0, op.z1, 0.02, 'int');
@@ -363,7 +490,7 @@ window.MLO = window.MLO || {};
                     else { pq('glass', 'glass', 'glass', true, 'x', wc + 0.003, gu0, gu1, gz0, gz1, 1); pq('glass', 'glass', 'glass', true, 'x', wc - 0.003, gu0, gu1, gz0, gz1, -1); cbox(wc - 0.015, gu0, gz0, wc + 0.015, gu1, gz1, 112, 0); }
                 }
                 // portal to the outside
-                if (exportMode) {
+                if (exportMode && !op.slant) {
                     const spec = OPEN[op.type] || OPEN.window, out = -sg.inward, wm = sg.c - sg.inward * outD / 2 + sg.inward * T / 2;
                     let a, b, c, d; const U0 = op.u0, U1 = op.u1, Z0 = op.z0, Z1 = op.z1;
                     if (sg.o === 'H') { if (out < 0) { a = [U0, wm, Z0]; b = [U1, wm, Z0]; c = [U1, wm, Z1]; d = [U0, wm, Z1]; } else { a = [U1, wm, Z0]; b = [U0, wm, Z0]; c = [U0, wm, Z1]; d = [U1, wm, Z1]; } }
@@ -375,6 +502,7 @@ window.MLO = window.MLO || {};
             });
             wallPiece(sg, cur, sg.u1, 0, H, first ? ext0 : 0, ext0);
         });
+        if (exportMode) slantPortals.forEach(sp => portals.push({ flags: (OPEN[sp.type] || OPEN.window).portal, corners: sp.corners }));
 
         // ---------------- the building's own walls, turned inwards (walls = 'skin') ----------------
         if (skin && M.ImportModel && M.ImportModel.wallFaces) {
@@ -548,7 +676,7 @@ window.MLO = window.MLO || {};
         batches.forEach(b => { b.pos = new Float32Array(b.pos); b.nrm = new Float32Array(b.nrm); b.uv = new Float32Array(b.uv); b.idx = new Uint16Array(b.idx); });
         stats.boxes = boxes.length; stats.portals = portals.length; stats.lights = lights.length;
         const resolved = []; segs.forEach(sg => sg.ops.forEach(op => resolved.push({ o: sg.o, c: sg.c, inward: sg.inward, u0: op.u0, u1: op.u1, z0: op.z0, z1: op.z1, type: op.type, entrance: op.entrance })));
-        return { batches, boxes, matList, portals, lights, entrance: null, bounds: { mn: bmn, mx: bmx }, stats, shell: { grid: g, segs, resolved } };
+        return { batches, boxes, matList, cpolys, portals, lights, entrance: null, bounds: { mn: bmn, mx: bmx }, stats, shell: { grid: g, segs, resolved } };
     }
 
     // what a floor needs to know about the others: how far up the floor above is, and the stairs that come up from the floor below. For the active floor of
@@ -566,7 +694,7 @@ window.MLO = window.MLO || {};
         if (!project.import || !M.Model) return build(project, opts);
         const L = M.Model.levelsOf({ import: project.import, shell: project.shell, settings: project.settings });
         if (L.length < 2 && !only) return build(project, opts);
-        const out = { batches: [], boxes: [], matList: [], portals: [], lights: [], entrance: null, bounds: { mn: [1e9, 1e9, 1e9], mx: [-1e9, -1e9, -1e9] }, stats: { tris: 0, boxes: 0, portals: 0, lights: 0, warnings: [] }, shell: null, floors: [] };
+        const out = { batches: [], boxes: [], matList: [], cpolys: [], portals: [], lights: [], entrance: null, bounds: { mn: [1e9, 1e9, 1e9], mx: [-1e9, -1e9, -1e9] }, stats: { tris: 0, boxes: 0, portals: 0, lights: 0, warnings: [] }, shell: null, floors: [] };
         L.forEach(l => {
             if (only && only.indexOf(l.id) < 0) return;
             const o = Object.assign({}, opts, levelCtx(project, L, l), { shared: l.active }), b = l.active ? build(project, o) : M.Model.withLevel(l.id, () => build(project, o)), dz = l.z, mo = out.matList.length;
@@ -574,6 +702,7 @@ window.MLO = window.MLO || {};
             b.matList.forEach(m => out.matList.push(m));
             b.batches.forEach(x => { if (dz) for (let i = 2; i < x.pos.length; i += 3) x.pos[i] += dz; x.floor = l.id; out.batches.push(x); });
             b.boxes.forEach(x => { const y = x.slice(); y[2] += dz; y[5] += dz; y[6] += mo; out.boxes.push(y); });
+            (b.cpolys || []).forEach(t => out.cpolys.push([[t[0][0], t[0][1], t[0][2] + dz], [t[1][0], t[1][1], t[1][2] + dz], [t[2][0], t[2][1], t[2][2] + dz], t[3] + mo]));
             b.portals.forEach(pr => { const c = pr.corners.slice(); for (let i = 2; i < c.length; i += 3) c[i] += dz; out.portals.push(Object.assign({}, pr, { corners: c })); });
             b.lights.forEach(li => out.lights.push(Object.assign({}, li, { z: li.z + dz })));
             for (let a = 0; a < 3; a++) { out.bounds.mn[a] = Math.min(out.bounds.mn[a], b.bounds.mn[a] + (a === 2 ? dz : 0)); out.bounds.mx[a] = Math.max(out.bounds.mx[a], b.bounds.mx[a] + (a === 2 ? dz : 0)); }

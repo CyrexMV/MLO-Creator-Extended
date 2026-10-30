@@ -519,6 +519,49 @@ def garage_wood():
     return m
 
 
+def garage_glass():
+    m = Mesh(); m.box('Anthracite', -GW / 2, GW / 2, 0, GH, -GT / 2, GT / 2)
+    for row in range(3):
+        y0, y1 = GH * (row + 0.12) / 3, GH * (row + 0.88) / 3
+        m.box('Glass', -GW / 2 + 0.14, GW / 2 - 0.14, y0, y1, -GT / 2 - 0.004, GT / 2 + 0.004)
+        m.box('Black', -GW / 2 + 0.08, GW / 2 - 0.08, y0 - 0.025, y0 + 0.025, GT / 2, GT / 2 + 0.025)
+    return m
+
+
+def garage_ribbed():
+    m = Mesh(); m.box('Black', -GW / 2, GW / 2, 0, GH, -GT / 2, GT / 2)
+    for i in range(1, 18):
+        x = -GW / 2 + GW * i / 18
+        for s in (1, -1):
+            z0, z1 = sorted((s * GT / 2, s * (GT / 2 + 0.012)))
+            m.box('Aluminium', x - 0.018, x + 0.018, 0.03, GH - 0.03, z0, z1)
+    for y in (0.03, GH - 0.03):
+        m.box('Aluminium', -GW / 2, GW / 2, y - 0.025, y + 0.025, -GT / 2, GT / 2)
+    return m
+
+
+def garage_red():
+    m = Mesh(); m.box('Red', -GW / 2, GW / 2, 0, GH, -GT / 2, GT / 2)
+    for i in range(1, 4):
+        y = GH * i / 4
+        for s in (1, -1):
+            z0, z1 = sorted((s * GT / 2, s * (GT / 2 + 0.006)))
+            m.box('Black', -GW / 2 + 0.03, GW / 2 - 0.03, y - 0.012, y + 0.012, z0, z1)
+    m.box('Black', -0.18, 0.18, 0.25, 0.29, GT / 2, GT / 2 + 0.04)
+    return m
+
+
+def garage_industrial():
+    m = Mesh(); m.box('Steel', -GW / 2, GW / 2, 0, GH, -GT / 2, GT / 2)
+    for x in (-GW / 2 + 0.06, GW / 2 - 0.06):
+        m.box('Black', x - 0.035, x + 0.035, 0, GH, -GT / 2 - 0.02, GT / 2 + 0.02)
+    for y in (0.04, GH - 0.04):
+        m.box('Black', -GW / 2, GW / 2, y - 0.035, y + 0.035, -GT / 2 - 0.02, GT / 2 + 0.02)
+    for x in (-0.65, 0.65):
+        m.box('Glass', x - 0.38, x + 0.38, GH * 0.58, GH * 0.82, -GT / 2 - 0.004, GT / 2 + 0.004)
+    return m
+
+
 # ---------- more windows ----------
 def window_bars():
     m = window(1.0, 1.2); bx = [-0.36 + 0.12 * i for i in range(7)]
@@ -692,6 +735,10 @@ if __name__ == '__main__':
     write_glb(os.path.join(OUT, 'mlo_garage_door_roller.glb'), 'Garage Door Roller Shutter', [('Garage_Door_Roller', garage_roller())])
     write_glb(os.path.join(OUT, 'mlo_garage_door_modern.glb'), 'Garage Door Modern', [('Garage_Door_Modern', garage_modern())])
     write_glb(os.path.join(OUT, 'mlo_garage_door_wood.glb'), 'Garage Door Wood', [('Garage_Door_Wood', garage_wood())])
+    write_glb(os.path.join(OUT, 'mlo_garage_door_glass.glb'), 'Garage Door Glass', [('Garage_Door_Glass', garage_glass())])
+    write_glb(os.path.join(OUT, 'mlo_garage_door_ribbed.glb'), 'Garage Door Ribbed', [('Garage_Door_Ribbed', garage_ribbed())])
+    write_glb(os.path.join(OUT, 'mlo_garage_door_red.glb'), 'Garage Door Red', [('Garage_Door_Red', garage_red())])
+    write_glb(os.path.join(OUT, 'mlo_garage_door_industrial.glb'), 'Garage Door Industrial', [('Garage_Door_Industrial', garage_industrial())])
     write_glb(os.path.join(OUT, 'mlo_windows_special.glb'), 'MLO Special Windows', [
         ('Arched_Top', window_arched()),
         ('Round_Porthole', window_round()),

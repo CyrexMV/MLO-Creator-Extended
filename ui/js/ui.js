@@ -21,6 +21,14 @@ window.MLO = window.MLO || {};
         eraser: 'Click a wall or cell to remove it. Drag over walls to remove several, or drag from empty ground to clear a rectangle.',
         paint: 'Click a wall face, floor, ceiling or roof to paint it. Anything unpainted uses the project theme below.'
     };
+    const GRID_GROUPS = [
+        { id: 'build', name: 'Walls and rooms', short: 'Build', icon: 'rooms', tools: [['wall', 'Wall', '1'], ['room', 'Room', '2'], ['floor', 'Floor', '3']] },
+        { id: 'open', name: 'Doors and windows', short: 'Openings', icon: 'door', tools: [['door', 'Door', '4'], ['window', 'Window', '5'], ['arch', 'Archway', '6']] },
+        { id: 'levels', name: 'Stairs and roof', short: 'Levels', icon: 'stairs', tools: [['stairs', 'Stairs', '7'], ['roof', 'Roof', '8']] },
+        { id: 'finish', name: 'Lights and entrance', short: 'Finish', icon: 'light', tools: [['light', 'Light', '9'], ['entrance', 'Entrance', '0']] },
+        '|',
+        { id: 'eraser', name: 'Eraser', short: 'Erase', icon: 'eraser', tools: [['eraser', 'Eraser', 'X']] }
+    ];
     const PAINT_TARGETS = [['wall', 'Walls'], ['floor', 'Floors'], ['ceil', 'Ceilings'], ['roof', 'Roofs']];
     const DEFAULT_ROWS = [['wallExt', 'Outside walls'], ['wallInt', 'Inside walls'], ['floor', 'Floors'], ['ceiling', 'Ceilings'], ['roof', 'Roofs'], ['trim', 'Trim & frames'], ['slab', 'Slab edges'], ['stair', 'Stair treads']];
 
@@ -57,20 +65,19 @@ window.MLO = window.MLO || {};
 
     // ---------- top bar ----------
     function renderTop() {
-        const tabs = $('tabs'); tabs.innerHTML = '';
-        (S.project.kind === 'import' ? [['import', 'Import'], ['build', 'Build'], ['paint', 'Paint'], ['export', 'Export']] : (S.project.kind === 'vanilla' ? [['vanilla', 'House'], ['build', 'Build'], ['paint', 'Paint'], ['export', 'Export']] : (S.project.kind === 'game' ? [['game', 'Interior']] : [['build', 'Build'], ['paint', 'Paint'], ['export', 'Export']])))
-            .forEach(t => tabs.append(el('button', { class: S.tab === t[0] ? 'on' : '', onclick: () => M.App.setTab(t[0]) }, t[1])));
+        const P = S.project, k = P.kind;
+        M.Layout.renderSteps(k === 'import' ? M.ImportUI.stepTabs()
+            : (k === 'vanilla' ? [['vanilla', 'House', !!(P.vanilla && P.vanilla.grabbed)], ['build', 'Build'], ['paint', 'Paint'], ['export', 'Export']]
+                : (k === 'game' ? [['game', 'Interior' + (P.game && P.game.name ? ': ' + P.game.name : '')]] : [['build', 'Build'], ['paint', 'Paint'], ['export', 'Export']])), S.tab);
         $('b-undo').disabled = !Model.hist.undo.length; $('b-redo').disabled = !Model.hist.redo.length;
         const nm = $('projname'); if (document.activeElement !== nm) nm.value = S.project.name;
-        $('savestate').textContent = S.saving ? 'Saving...' : (S.saved ? 'Saved' : 'Unsaved');
+        $('savestate').textContent = S.saving ? 'Saving...' : (S.saved ? 'Saved' : 'Unsaved'); $('savestate').classList.toggle('unsaved', !S.saved);
     }
 
     // ---------- left: build ----------
     function renderBuild(root) {
-        const t = S.tool, grid = el('div', { class: 'tools' });
-        TOOLS.forEach(tl => grid.append(el('button', { class: 'tool' + (t === tl[0] ? ' on' : ''), onclick: () => M.App.setTool(tl[0]) }, tl[1], el('kbd', null, tl[2]))));
-        root.append(el('div', { class: 'h' }, 'Tools'), grid);
-        root.append(el('div', { class: 'h' }, TOOLS.filter(x => x[0] === t).map(x => x[1])[0] || 'Tool'));
+        const t = S.tool;
+        M.Layout.toolHead(root, M.Layout.groupOf(GRID_GROUPS, t), t);
         if (TOOL_HELP[t]) root.append(el('div', { class: 'note' }, TOOL_HELP[t]));
         if (t === 'room' || t === 'floor') {
             root.append(el('div', { class: 'row' }, el('label', null, 'Floor'), swatchEl(S.brush.floor, 28), el('span', { class: 'grow' }, TEX.def(S.brush.floor).name),
@@ -131,17 +138,20 @@ window.MLO = window.MLO || {};
         });
     }
 
-    // a picture the user picked becomes a texture in the "Mine" group (stored with the project, exported like the others)
-    function addUserImage(file) {
+    // a picture the user picked (png, jpg) becomes a texture in the "Mine" group (stored with the project, exported like the others); done(id): what to do with
+    // it then (a wall or a part of a model takes it), else it becomes the brush of the Paint tab
+    function addUserImage(file, done) {
         if (!file) return; const url = URL.createObjectURL(file), im = new Image();
         im.onload = () => {
             const id = 'my_' + (file.name.replace(/\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 14) || 'image') + '_' + Math.random().toString(36).slice(2, 4);
             // the middle square of the picture, so a wide photo is not squeezed
-            const s = Math.min(im.width, im.height), c = document.createElement('canvas'); c.width = c.height = 256;
-            c.getContext('2d').drawImage(im, (im.width - s) / 2, (im.height - s) / 2, s, s, 0, 0, 256, 256);
+            const s = Math.min(im.width, im.height), Z = s >= 512 ? 512 : 256, c = document.createElement('canvas'); c.width = c.height = Z;
+            c.getContext('2d').drawImage(im, (im.width - s) / 2, (im.height - s) / 2, s, s, 0, 0, Z, Z);
             const def = TEX.addUser(id, file.name.replace(/\.[^.]+$/, '').slice(0, 24), 1, c); URL.revokeObjectURL(url);
             S.ref = S.ref || {}; S.ref.tex = (S.ref.tex || []).concat([{ id, name: def.name, tile: def.tile, url: TEX.userUrl(id) }]);
-            Model.saveRef().catch(() => { }); S.benchCat = 'Mine'; S.benchSel = id; S.brush[S.paintTarget] = id; M.App.refreshPanels();
+            Model.saveRef().catch(() => { });
+            if (done) { done(id); toast('Your image ' + def.name + ' is a texture now (under Mine).', 'ok'); return; }
+            S.benchCat = 'Mine'; S.benchSel = id; S.brush[S.paintTarget] = id; M.App.refreshPanels();
         };
         im.onerror = () => { toast('That file is not a picture the program can read.', 'err'); URL.revokeObjectURL(url); }; im.src = url;
     }
@@ -153,7 +163,7 @@ window.MLO = window.MLO || {};
         big.getContext('2d').drawImage(TEX.swatch(S.benchSel, 120), 0, 0);
         const cats = ['All'].concat(TEX.cats); if (!S.benchCat) S.benchCat = 'All';
         const chips = el('div', { class: 'chips' }); cats.forEach(c => chips.append(el('button', { class: 'chip' + (S.benchCat === c ? ' on' : ''), onclick: () => { S.benchCat = c; renderBench(); } }, c)));
-        if (S.project.kind === 'import') chips.append(el('label', { class: 'chip', style: { cursor: 'pointer' }, title: 'Use a picture of your own (png, jpg) as a texture' }, '+ Add an image',
+        chips.append(el('label', { class: 'chip', style: { cursor: 'pointer' }, title: 'Use a picture of your own (png, jpg) as a texture' }, '+ Add an image',
             el('input', { type: 'file', accept: 'image/*', style: { display: 'none' }, onchange: (e) => { addUserImage(e.target.files[0]); e.target.value = ''; } })));
         const grid = el('div', { class: 'sw-grid' });
         TEX.list.filter(x => S.benchCat === 'All' || x.cat === S.benchCat).forEach(x => {
@@ -203,6 +213,7 @@ window.MLO = window.MLO || {};
         root.append(el('div', { class: 'row' }, el('label', null, 'Floor above ground'), el('input', { type: 'number', class: 'grow', step: '0.05', value: X.floorAbove, onchange: (e) => { X.floorAbove = parseFloat(e.target.value) || 0; Model.touch(); updateExportInfo(); } }), el('span', { class: 'note' }, 'm')));
         E.place = el('div', { class: 'note' }); root.append(E.place);
         root.append(el('div', { class: 'h' }, 'Options'));
+        root.append(UI.ambientRow(X));
         root.append(el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: X.autoLights ? true : null, onchange: (e) => { X.autoLights = e.target.checked; Model.touch(); } }), 'Automatic ceiling lights in every room'));
         root.append(el('div', { class: 'row' }, el('label', null, 'Output folder'), el('input', { type: 'text', class: 'grow', value: X.outDir || '', placeholder: 'default: the output folder next to the program', onchange: (e) => { X.outDir = e.target.value.trim(); Model.touch(); } })));
         E.btn = el('button', { class: 'btn primary', style: { width: '100%', marginTop: '10px', padding: '9px' }, onclick: () => doExport() }, 'Export resource');
@@ -217,7 +228,7 @@ window.MLO = window.MLO || {};
         E.ent.innerHTML = '';
         if (!P.entrance) E.ent.append(el('span', null, 'No entrance marked. Use the '), el('b', null, 'Entrance'), el('span', null, ' tool on a door in the Build tab, or the project origin (grid corner 0,0) is placed at the coordinates.'));
         else if (built.entrance && built.entrance.ok) E.ent.append(el('span', null, 'Entrance: '), el('b', null, 'door on level 0 at grid ' + built.entrance.center[0].toFixed(1) + ', ' + built.entrance.center[1].toFixed(1)));
-        else E.ent.append(el('b', { style: { color: '#f0a4a3' } }, 'The entrance is not on an outside wall.'));
+        else E.ent.append(el('b', { style: { color: '#ffb3c2' } }, 'The entrance is not on an outside wall.'));
         const pl = S.project.export.coords ? computePlacement(P, built) : null;
         E.place.textContent = pl ? (pl.error ? pl.error : 'Project origin goes to ' + pl.x.toFixed(2) + ', ' + pl.y.toFixed(2) + ', ' + pl.z.toFixed(2) + ' turned ' + pl.heading.toFixed(1) + '°') : '';
     }
@@ -235,7 +246,7 @@ window.MLO = window.MLO || {};
         try {
             log('Meshing: ' + built.stats.tris + ' triangles, ' + built.stats.boxes + ' collision boxes, ' + built.stats.portals + ' portals, ' + built.stats.lights + ' lights');
             if (!built.portals.length) log('Warning: no windows or doors on an outside wall, so the interior is never visible from outside. Add an entrance door.', 'bad');
-            const model = Mesher.toExport(P, built, { light: {}, model: { resource, prefix: P.prefix, label: X.label || P.name, timecycle: 'hash_E83C53FC', placement: { x: pl.x, y: pl.y, z: pl.z, heading: pl.heading }, entranceNote: pl.note, outDir: X.outDir || undefined } });
+            const model = Mesher.toExport(P, built, { light: {}, model: { resource, prefix: P.prefix, label: X.label || P.name, timecycle: 'hash_E83C53FC', ambient: X.ambient || 'normal', placement: { x: pl.x, y: pl.y, z: pl.z, heading: pl.heading }, entranceNote: pl.note, outDir: X.outDir || undefined } });
             const res = await Model.api('export', 'POST', model);
             if (!res.ok) { log('Export failed: ' + res.error, 'bad'); console.error(res.detail); }
             else {
@@ -253,14 +264,35 @@ window.MLO = window.MLO || {};
     // ---------- left dispatcher ----------
     function renderLeft() {
         const root = $('left'); root.innerHTML = '';
-        if (S.project.kind === 'import') { M.ImportUI.renderLeft(root); return; }
-        if (S.project.kind === 'game') { M.GameMlo.renderLeft(root); return; }
-        if (S.project.kind === 'vanilla') {
+        if (S.project.kind === 'import') M.ImportUI.renderLeft(root);
+        else if (S.project.kind === 'game') M.GameMlo.renderLeft(root);
+        else if (S.project.kind === 'vanilla') {
             const V = M.VanillaUI;
             if (S.tab === 'vanilla') V.renderHouse(root); else if (S.tab === 'build') V.renderBuild(root); else if (S.tab === 'paint') V.renderPaint(root); else V.renderExport(root);
-            return;
         }
-        if (S.tab === 'build') renderBuild(root); else if (S.tab === 'paint') renderPaint(root); else renderExport(root);
+        else if (S.tab === 'build') renderBuild(root); else if (S.tab === 'paint') renderPaint(root); else renderExport(root);
+        renderFrame(); renderRight();
+    }
+    // the rail, the view bar and the status bar of each kind of project
+    function renderFrame() {
+        const k = S.project.kind, L = M.Layout;
+        if (k === 'import') { L.renderRail(M.ImportUI.railGroups(), S.tab === 'build' ? S.shellTool : null); L.setView(M.ImportUI.viewItems); L.setStatus(M.ImportUI.statusItems); return; }
+        if (k === 'vanilla') { L.renderRail(M.VanillaUI.railGroups(), S.tab === 'build' ? S.shellTool : null); L.setView(M.VanillaUI.viewItems); L.setStatus(null); return; }
+        if (k === 'game') { L.renderRail(M.GameMlo.railGroups(), null); L.setView(M.GameMlo.viewItems); L.setStatus(M.GameMlo.statusItems); return; }
+        L.renderRail(GRID_GROUPS, S.tab === 'build' ? S.tool : null); L.setView(gridView); L.setStatus(gridStatus);
+    }
+    function gridView() {
+        const R = M.App.renderer;
+        return [{ seg: [['up', 'Up'], ['half', 'Half'], ['down', 'Down']], cur: S.view.wallMode, label: 'Walls', pick: v => { S.view.wallMode = v; M.App.remesh(); renderRight(); } }, '|',
+            { icon: 'layers', label: 'Floors', on: S.view.floor, act: () => { S.view.floor = !S.view.floor; renderRight(); } },
+            { icon: 'roof', label: 'Roofs', on: S.view.roof, act: () => { S.view.roof = !S.view.roof; renderRight(); } },
+            { icon: 'grid', label: 'Grid', on: S.view.grid, act: () => { S.view.grid = !S.view.grid; R.showGrid = S.view.grid; renderRight(); } }, '|',
+            { icon: 'top', label: 'Top-down', title: 'Top-down (T)', act: () => M.App.toggleTopDown() }, { icon: 'frame', label: 'Frame', title: 'Frame the house (Home)', act: () => M.App.frameAll() }];
+    }
+    function gridStatus() {
+        const P = S.project, lv = el('div', { class: 'slv' }, el('span', { class: 'sk' }, 'Level'));
+        P.levels.forEach((l, k) => lv.append(el('button', { class: S.level === k ? 'on' : '', onclick: () => M.App.setLevel(k) }, String(k))));
+        return [lv, el('span', { class: 'sc' }, Object.keys(Model.cur().walls).length + ' walls · ' + Object.keys(Model.cur().floor).length + ' floor cells')];
     }
 
     // ---------- right: view & levels ----------
@@ -269,7 +301,11 @@ window.MLO = window.MLO || {};
         if (P.kind === 'import') { M.ImportUI.renderRight(root); return; }
         if (P.kind === 'vanilla') { M.VanillaUI.renderRight(root); return; }
         if (P.kind === 'game') { M.GameMlo.renderRight(root); return; }
-        root.append(el('div', { class: 'h' }, 'View & Levels'));
+        M.Layout.inspector(root, [{ id: 'scene', label: 'Scene', render: gridScene }, { id: 'project', label: 'Project', render: gridProject }]);
+    }
+    function gridScene(root) {
+        const P = S.project;
+        root.append(el('div', { class: 'h' }, 'Levels'));
         const lv = el('div', { class: 'levels' });
         P.levels.forEach((l, k) => lv.append(el('button', { class: 'lvl' + (S.level === k ? ' on' : ''), onclick: () => M.App.setLevel(k) }, 'L' + k)));
         lv.append(el('button', { class: 'lvl', title: 'Add a level above', onclick: () => { Model.edit(PP => { PP.levels.push(Model.newLevel()); }); M.App.setLevel(P.levels.length - 1); } }, '+'));
@@ -278,7 +314,11 @@ window.MLO = window.MLO || {};
             S.level > 0 ? el('button', { class: 'btn sm', title: 'Copy the walls and floors of the level below onto this level', onclick: () => { Model.edit(PP => { const src = PP.levels[S.level - 1], dst = PP.levels[S.level]; dst.floor = JSON.parse(JSON.stringify(src.floor)); dst.walls = JSON.parse(JSON.stringify(src.walls)); dst.ceil = {}; }); } }, 'Copy level below') : null,
             P.levels.length > 1 && S.level === P.levels.length - 1 ? el('button', { class: 'btn sm danger', onclick: async () => { const L = P.levels[S.level]; if (Object.keys(L.floor).length + Object.keys(L.walls).length > 0 && !(await confirmDlg('Remove level ' + S.level + '?', 'Everything on this level will be deleted. You can undo with Ctrl+Z.', 'Remove', true))) return; Model.edit(PP => { PP.levels.pop(); }); M.App.setLevel(P.levels.length - 1); } }, 'Remove top level') : null));
         root.append(el('div', { class: 'row', style: { marginTop: '8px' } }, el('label', null, 'Level height'), el('input', { type: 'number', class: 'grow', step: '0.1', min: '2.4', max: '5', value: P.settings.storyHeight, onchange: (e) => { const v = Math.min(5, Math.max(2.4, parseFloat(e.target.value) || 3.1)); Model.edit(PP => { PP.settings.storyHeight = v; }); M.App.refreshGrid(); } }), el('span', { class: 'note' }, 'm')));
-        const chk = (key, label) => el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: S.view[key] ? true : null, onchange: (e) => { S.view[key] = e.target.checked; if (key === 'grid') M.App.renderer.showGrid = e.target.checked; } }), label);
+    }
+    function gridProject(root) {
+        const P = S.project;
+        root.append(el('div', { class: 'h' }, 'Show'));
+        const chk = (key, label) => el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: S.view[key] ? true : null, onchange: (e) => { S.view[key] = e.target.checked; if (key === 'grid') M.App.renderer.showGrid = e.target.checked; M.Layout.renderView(); } }), label);
         root.append(chk('floor', 'Floors'), chk('walls', 'Walls'), chk('roof', 'Roofs'), chk('grid', 'Grid'), chk('outside', 'Outside shell only (what the game draws from outside)'));
         root.append(el('div', { class: 'row' }, el('label', null, 'Walls'), seg([['up', 'Up'], ['half', 'Half'], ['down', 'Down']], S.view.wallMode, v => { S.view.wallMode = v; M.App.remesh(); renderRight(); })));
         root.append(el('div', { class: 'row wrap' }, el('button', { class: 'btn sm', onclick: () => M.App.toggleTopDown() }, 'Top-down (T)'),
@@ -376,9 +416,36 @@ window.MLO = window.MLO || {};
             el('div', { class: 'foot' }, el('button', { class: 'btn primary', onclick: closeModal }, 'Got it'))));
     }
 
-    UI.renderAll = function () { renderTop(); renderLeft(); renderRight(); renderBench(); document.body.classList.toggle('paint', S.tab === 'paint'); };
+    UI.renderAll = function () { document.body.classList.toggle('paint', S.tab === 'paint'); renderTop(); renderLeft(); renderBench(); };
     UI.renderTop = renderTop; UI.renderRight = renderRight; UI.renderLeft = renderLeft; UI.renderBench = renderBench; UI.updateExportInfo = updateExportInfo;
-    UI.addUserImage = addUserImage; UI.newProjectDialog = newProjectDialog; UI.startDialog = startDialog; UI.saveAsDialog = saveAsDialog; UI.projectsDialog = projectsDialog; UI.helpDialog = helpDialog; UI.confirm = confirmDlg; UI.toast = toast; UI.closeModal = closeModal; UI.modal = modal;
+    UI.addUserImage = addUserImage;
+    // a prop of a later DLC than the server's game build (sv_enforceGameBuild in its server.cfg, found above the output folder) does not show on it
+    UI.serverBuild = 0;
+    UI.buildNote = (m) => (m && m.build && UI.serverBuild && m.build > UI.serverBuild) ? el('div', { class: 'note bad' }, 'From the DLC ' + m.dlc + ': it needs game build ' + (m.build > 9000 ? 'newer than 3889' : m.build) + ', your server runs ' + UI.serverBuild + ' (sv_enforceGameBuild in server.cfg), so it does not show there. Raise the build or pick another prop.') : null;
+    // how much of the game's ambient light the exported walls, floors and ceilings take (Exporter.SetAmbient): X is the project's export settings
+    UI.ambientRow = (X, onChange) => el('div', null,
+        el('div', { class: 'row' }, el('label', null, 'Room light'), el('select', { class: 'grow', onchange: (e) => { X.ambient = e.target.value; Model.touch(); if (onChange) onChange(); } },
+            ...[['full', 'Full (glows at night, as before)'], ['bright', 'Bright'], ['normal', 'Normal'], ['dim', 'Dim'], ['dark', 'Dark (only your lamps light it)']].map(o => el('option', { value: o[0], selected: (X.ambient || 'normal') === o[0] ? true : null }, o[1])))),
+        el('div', { class: 'note' }, 'How much daylight and the game\'s own ambient light reach the new walls, floors and ceilings. Lower it when the interior glows at night; place lamps to light it.'));
+    // ---------- the user's own props (the props folder next to the program, MyProps.cs): a row of them under a prop search; pick(name) places one ----------
+    UI.ownProps = null;
+    async function propsCall(what) {
+        try { const r = await Model.api(what, what === 'props' ? 'GET' : 'POST', what === 'props' ? undefined : {}); if (r.ok === false) throw new Error(r.error); UI.ownProps = r.props || []; return r; }
+        catch (e) { toast(e.message, 'err'); return null; }
+    }
+    UI.myPropsRow = function (pick) {
+        if (UI.ownProps == null) { UI.ownProps = []; propsCall('props').then(() => M.UI.renderLeft()); }
+        const box = el('div', null, el('div', { class: 'row wrap' }, el('b', null, 'Your props'),
+            el('button', { class: 'btn sm', title: 'Add .ydr models (and their .ytd textures) of your own', onclick: async () => { const r = await propsCall('props/add'); if (r && r.added && r.added.length) toast('Added: ' + r.added.join(', ') + '. Click one to place it.', 'ok'); M.UI.renderLeft(); } }, '+ Add props (.ydr)'),
+            el('button', { class: 'btn sm', title: 'Open the props folder', onclick: () => propsCall('props/open') }, 'Folder')));
+        if (!UI.ownProps.length) box.append(el('div', { class: 'note' }, 'None yet. A .ydr with a .ytd of the same name next to it brings its textures along; collision built into the model goes with it.'));
+        else box.append(el('div', { class: 'row wrap' }, ...UI.ownProps.map(n => el('button', { class: 'chip', title: 'Place ' + n, onclick: () => pick(n) }, n))));
+        return box;
+    };
+    // a small "+ Image" button that adds a picture of the user's as a texture and hands it to done(id)
+    UI.imageButton = (done) => el('label', { class: 'btn sm', style: { cursor: 'pointer' }, title: 'Use a picture of your own (png, jpg) as a texture' }, '+ Image',
+        el('input', { type: 'file', accept: 'image/*', style: { display: 'none' }, onchange: (e) => { addUserImage(e.target.files[0], done); e.target.value = ''; } }));
+ UI.newProjectDialog = newProjectDialog; UI.startDialog = startDialog; UI.saveAsDialog = saveAsDialog; UI.projectsDialog = projectsDialog; UI.helpDialog = helpDialog; UI.confirm = confirmDlg; UI.toast = toast; UI.closeModal = closeModal; UI.modal = modal;
     UI.kit = { stepper, seg, swatchEl, confirm: confirmDlg };
     UI.updateShellInfo = function () { if (M.VanillaUI && S.project.kind === 'vanilla' && S.tab === 'export') M.VanillaUI.updatePlace(); };
     M.UI = UI;

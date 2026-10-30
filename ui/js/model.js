@@ -211,7 +211,7 @@ window.MLO = window.MLO || {};
             // an interior of the game, opened as its single parts (buildings.js finds it, gamemlo.js shows it): where it stands, its rooms, portals, objects and
             // entity sets as the game defines them, in the interior's own frame; setsOn: the entity sets that are shown
             // twin: the other interior the game places at the same spot (its DLC version), if any
-            p.game = { name: '', hash: 0, ytyp: '', ymaps: [], place: '', world: { x: 0, y: 0, z: 0, heading: 0 }, rooms: [], portals: [], entities: [], sets: [], setsOn: [], twin: '' };
+            p.game = { name: '', hash: 0, ytyp: '', ymaps: [], place: '', world: { x: 0, y: 0, z: 0, heading: 0 }, rooms: [], portals: [], entities: [], sets: [], setsOn: [], twin: '', walls: [], mods: {} };
         }
         return p;
     }
@@ -316,9 +316,11 @@ window.MLO = window.MLO || {};
         state.shellSel = null; state.ref = null;
         if (state.project.kind === 'vanilla') await loadRef(name);
         // images the user added to an imported-model project live next to it (not in the undo history)
-        if (state.project.kind === 'import') { await loadRef(name); await M.TEX.loadUser(state.ref && state.ref.tex); } else M.TEX.clearUser();
+        // (the user's own images are kept in the project's ref file, for every kind of project)
+        if (state.project.kind !== 'vanilla') await loadRef(name);
+        await M.TEX.loadUser(state.ref && state.ref.tex);
         state.cutSel = null;
-        if (state.project.kind === 'import') state.tab = state.project.import.target ? (state.tab === 'import' || state.tab === 'vanilla' ? 'build' : state.tab) : 'import';
+        if (state.project.kind === 'import') state.tab = state.project.import.target ? (['build', 'paint', 'export'].indexOf(state.tab) < 0 ? 'build' : state.tab) : 'import';
         else if (state.project.kind === 'game') state.tab = 'game';
         else state.tab = (state.project.kind === 'vanilla' && !state.project.vanilla.grabbed) ? 'vanilla' : ((state.tab === 'vanilla' || state.tab === 'import' || state.tab === 'game') ? 'build' : state.tab);
         try { localStorage.setItem('mlo.last', name); } catch (e) { }
@@ -343,7 +345,7 @@ window.MLO = window.MLO || {};
         const existing = await listProjects(); let n = safeName(newName) || 'Copy', base = n, c = 2;
         while (existing.some(e => e.name.toLowerCase() === n.toLowerCase())) n = base + ' ' + c++;
         const from = safeName(state.project.name);
-        await save(); if (state.project.kind === 'import' && state.ref) await saveRef();
+        await save(); if (state.ref) await saveRef();
         await api('project-copy?name=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(n), 'POST');
         await openProject(n); return n;
     }
@@ -368,7 +370,7 @@ window.MLO = window.MLO || {};
     async function duplicate(name) {
         const existing = await listProjects(); let n = safeName(name + ' copy'), base = n, c = 2;
         while (existing.some(e => e.name.toLowerCase() === n.toLowerCase())) n = base + ' ' + c++;
-        if (name === safeName(state.project.name)) { await save(); if (state.project.kind === 'import' && state.ref) await saveRef(); }
+        if (name === safeName(state.project.name)) { await save(); if (state.ref) await saveRef(); }
         await api('project-copy?name=' + encodeURIComponent(name) + '&to=' + encodeURIComponent(n), 'POST');
         return n;
     }

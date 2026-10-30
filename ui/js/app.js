@@ -245,7 +245,7 @@ window.MLO = window.MLO || {};
         bus.on('hint', (h) => { $('hint').textContent = 'Level ' + S.level + '  ·  cell ' + h.cx + ', ' + h.cy; });
         $('b-undo').onclick = () => Model.undo(); $('b-redo').onclick = () => Model.redo();
         $('b-new').onclick = () => UI.newProjectDialog(); $('b-projects').onclick = () => UI.projectsDialog();
-        $('b-save').onclick = async () => { try { await Model.save(); if (S.project.kind === 'import' && S.ref) await Model.saveRef(); UI.toast('Saved "' + S.project.name + '"', 'ok'); } catch (e) { UI.toast('Save failed: ' + e.message, 'err'); } }; $('b-export').onclick = () => App.setTab('export');
+        $('b-save').onclick = async () => { try { await Model.save(); if (S.project.kind === 'import' && S.ref) await Model.saveRef(); UI.toast('Saved "' + S.project.name + '"', 'ok'); } catch (e) { UI.toast('Save failed: ' + e.message, 'err'); } }; $('b-export').onclick = () => { if (isGame()) M.Layout.openTab('project'); else App.setTab('export'); };
         $('helpbtn').onclick = () => UI.helpDialog();
         window.addEventListener('keydown', e => { if (e.key === 'F1') { e.preventDefault(); UI.helpDialog(); } });
         const pn = $('projname');

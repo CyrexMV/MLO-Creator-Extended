@@ -31,7 +31,7 @@ namespace MloCreator
         public string File; public int Room; public string Material; public bool Hi;
     }
 
-    public static class Vanilla
+    public static partial class Vanilla
     {
         public static volatile string Status = "";
         static RpfManager rpf; static string gta, cache;
@@ -73,10 +73,142 @@ namespace MloCreator
         public static RpfFileEntry GetEntry(string lowerName, out RpfFile owner) { owner = null; RpfFileEntry e; if (!ent.TryGetValue(lowerName, out e)) return null; owner = own[lowerName]; return e; }
         public static List<string> Names(string suffix) { List<string> l = new List<string>(); foreach (string k in ent.Keys) if (k.EndsWith(suffix)) l.Add(k); return l; }
 
+        // a file as CodeWalker reads it (without its header, not compressed): the opened resource's first (see UseResource), then the game's
         public static byte[] Bytes(string name, out RpfFileEntry entry)
         {
-            string k = name.ToLowerInvariant(); entry = null; RpfFileEntry e; if (!ent.TryGetValue(k, out e)) return null;
+            string k = name.ToLowerInvariant(); entry = null; string lp; if (looseRead.TryGetValue(k, out lp) || libRead.TryGetValue(k, out lp)) return LooseData(lp, k, out entry);
+            RpfFileEntry e; if (!ent.TryGetValue(k, out e)) return null;
             entry = e; return own[k].ExtractFile(e);
+        }
+        public static bool Has(string name) { string k = name.ToLowerInvariant(); return looseRead.ContainsKey(k) || libRead.ContainsKey(k) || ent.ContainsKey(k); }
+        static long SizeOf(string k) { string lp; if (looseRead.TryGetValue(k, out lp) || libRead.TryGetValue(k, out lp)) return new FileInfo(lp).Length; RpfFileEntry e; return ent.TryGetValue(k, out e) ? e.GetFileSize() : 0; }
+
+        // ---------------- the files of a FiveM resource opened in the editor (an MLO made elsewhere): they come before the game's own of the same name ----------------
+        // looseRead: lower-case name -> the file to read (the copy taken when the project was opened, for the files an export writes over; else the resource's
+        // own). looseHome: where the file is in the resource. The files an earlier export of the same project made are left out (it makes them again).
+        static Dictionary<string, string> looseRead = new Dictionary<string, string>(), looseHome = new Dictionary<string, string>();
+        static Dictionary<uint, string> looseArch = new Dictionary<uint, string>(), looseYtd = new Dictionary<uint, string>();      // archetype -> its .ytyp; texture dictionary -> its .ytd
+        static Dictionary<uint, uint> looseTxd = new Dictionary<uint, uint>();                                                      // archetype -> its texture dictionary
+        static string looseKey;
+        public static readonly string[] LooseKinds = { ".ydr", ".yft", ".ytd", ".ytyp", ".ymap", ".ybn" };
+        public static string ResourceDir { get; private set; }
+        public static List<string> LooseWarnings = new List<string>();
+
+        // the files of a resource folder (null: none, only the game's); snap: the copy of its map files taken when the project was opened (Buildings.Snapshot)
+        public static void UseResource(string dir, string snap)
+        {
+            lock (gate)
+            {
+                if (string.IsNullOrEmpty(dir))
+                {
+                    if (looseKey == null) return;
+                    looseRead = new Dictionary<string, string>(); looseHome = new Dictionary<string, string>(); looseArch = new Dictionary<uint, string>(); looseYtd = new Dictionary<uint, string>(); looseTxd = new Dictionary<uint, uint>();
+                    looseKey = null; ResourceDir = null; LooseWarnings = new List<string>(); ForgetModels(); return;
+                }
+                dir = Path.GetFullPath(dir); if (!Directory.Exists(dir)) throw new Exception("The resource folder " + dir + " is not there any more.");
+                if (!string.IsNullOrEmpty(snap) && !Directory.Exists(snap)) throw new Exception("The copy of the resource taken when this project was opened is gone (" + snap + "). Open the resource again (Buildings of the game, Open an MLO resource).");
+                List<string> files = new List<string>(); foreach (string f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories)) if (Array.IndexOf(LooseKinds, Path.GetExtension(f).ToLowerInvariant()) >= 0) files.Add(f);
+                files.Sort(StringComparer.OrdinalIgnoreCase);
+                HashSet<string> made = Buildings.MadeBy(snap, dir);
+                StringBuilder key = new StringBuilder(dir + "|" + snap);
+                foreach (string f in files) key.Append('|').Append(f).Append(':').Append(File.GetLastWriteTimeUtc(f).Ticks);
+                if (key.ToString() == looseKey) return;
+                Dictionary<string, string> read = new Dictionary<string, string>(), home = new Dictionary<string, string>(); List<string> warns = new List<string>();
+                foreach (string f in files)
+                {
+                    string k = Path.GetFileName(f).ToLowerInvariant(); if (made.Contains(k)) continue;
+                    if (home.ContainsKey(k)) { warns.Add(k + " is in the resource twice (" + home[k].Substring(dir.Length) + " and " + f.Substring(dir.Length) + "): the first one is used."); continue; }
+                    home[k] = f; read[k] = f;
+                }
+                if (!string.IsNullOrEmpty(snap)) foreach (string f in Directory.GetFiles(snap)) { string k = Path.GetFileName(f).ToLowerInvariant(); if (Array.IndexOf(LooseKinds, Path.GetExtension(k)) >= 0) read[k] = f; }
+                // their names (the game knows its models by the hash of the name): a file's own name, and the one of an interior's collision file after hi@
+                foreach (string k in read.Keys) { string stem = Path.GetFileNameWithoutExtension(k); JenkIndex.Ensure(stem); if (stem.StartsWith("hi@")) JenkIndex.Ensure(stem.Substring(3)); }
+                Dictionary<uint, string> arch = new Dictionary<uint, string>(), ytd = new Dictionary<uint, string>(); Dictionary<uint, uint> txd = new Dictionary<uint, uint>();
+                foreach (string k in read.Keys) if (k.EndsWith(".ytd")) ytd[JenkHash.GenHash(k.Substring(0, k.Length - 4))] = k;
+                foreach (KeyValuePair<string, string> kv in read)
+                {
+                    if (!kv.Key.EndsWith(".ytyp")) continue;
+                    try
+                    {
+                        RpfFileEntry fe; byte[] d = LooseData(kv.Value, kv.Key, out fe); YtypFile y = new YtypFile(); y.Load(d, fe); if (y.AllArchetypes == null) continue;
+                        foreach (Archetype a in y.AllArchetypes) { if (a == null) continue; arch[a.Hash.Hash] = kv.Key; if (a.TextureDict.Hash != 0) txd[a.Hash.Hash] = a.TextureDict.Hash; }
+                    }
+                    catch (Exception ex) { warns.Add(kv.Key + ": " + ex.Message); }
+                }
+                looseRead = read; looseHome = home; looseArch = arch; looseYtd = ytd; looseTxd = txd; looseKey = key.ToString(); ResourceDir = dir; LooseWarnings = warns;
+                ForgetModels();
+            }
+        }
+        // the models read before came from other files
+        static void ForgetModels() { lock (bboxCache) bboxCache.Clear(); lock (ownCol) ownCol.Clear(); lock (propColCache) propColCache.Clear(); Buildings.ForgetModels(); ImportHost.ForgetModels(); }
+        static byte[] LooseData(string path, string k, out RpfFileEntry entry)
+        {
+            byte[] d = File.ReadAllBytes(path); long len = d.Length;
+            if (len < 16 || BitConverter.ToUInt32(d, 0) != 0x37435352) throw new Exception(k + " cannot be read: it is not a game file as CodeWalker writes it (encrypted by FiveM's asset escrow, or broken).");          // (RSC7)
+            RpfResourceFileEntry e = RpfFile.CreateResourceFileEntry(ref d, 0);
+            d = ResourceBuilder.Decompress(d); e.Name = k; e.NameLower = k; e.FileSize = (uint)len; e.Path = path;
+            entry = e; return d;
+        }
+        // the opened resource's files: their names (with the ending), where one of them is in the resource (null: not there), is it there
+        public static List<string> LooseNames(string suffix) { List<string> l = new List<string>(); foreach (string k in looseRead.Keys) if (k.EndsWith(suffix)) l.Add(k); l.Sort(StringComparer.Ordinal); return l; }
+        public static string LooseHome(string name) { string p; return looseHome.TryGetValue(name.ToLowerInvariant(), out p) ? p : null; }
+        public static bool IsLoose(string name) { return looseRead.ContainsKey(name.ToLowerInvariant()); }
+        // is the opened resource's file of this name the game's own, unchanged (a map types file an export copied along)
+        public static bool SameAsGame(string name)
+        {
+            string k = name.ToLowerInvariant(), lp; RpfFileEntry ge; if (!looseRead.TryGetValue(k, out lp) || !ent.TryGetValue(k, out ge)) return false;
+            try { RpfFileEntry le; byte[] a = LooseData(lp, k, out le), b = own[k].ExtractFile(ge); if (a == null || b == null || a.Length != b.Length) return false; for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) return false; return true; }
+            catch (Exception) { return false; }
+        }
+
+        // ---------------- the user's own props (the props folder next to the program): their models and texture dictionaries, after an opened resource's, before the game's ----------------
+        static Dictionary<string, string> libRead = new Dictionary<string, string>();
+        static string libKey;
+        public static string LibraryDir { get; private set; }
+        public static void UseLibrary(string dir)
+        {
+            lock (gate)
+            {
+                List<string> files = new List<string>(); if (Directory.Exists(dir)) foreach (string f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories)) { string x = Path.GetExtension(f).ToLowerInvariant(); if (x == ".ydr" || x == ".ytd") files.Add(f); }
+                files.Sort(StringComparer.OrdinalIgnoreCase);
+                StringBuilder key = new StringBuilder(dir); foreach (string f in files) key.Append('|').Append(f).Append(':').Append(File.GetLastWriteTimeUtc(f).Ticks);
+                LibraryDir = dir; if (key.ToString() == libKey) return;
+                Dictionary<string, string> read = new Dictionary<string, string>();
+                foreach (string f in files) { string k = Path.GetFileName(f).ToLowerInvariant(); if (!read.ContainsKey(k)) { read[k] = f; JenkIndex.Ensure(Path.GetFileNameWithoutExtension(k)); } }
+                bool had = libKey != null; libRead = read; libKey = key.ToString(); libTex.Clear();
+                if (had) ForgetModels();
+            }
+        }
+        // is it one of the user's props (a model name, without .ydr); the names of the props (or of their texture dictionaries), with the ending
+        public static bool IsLibrary(string name) { return !string.IsNullOrEmpty(name) && libRead.ContainsKey(name.ToLowerInvariant() + ".ydr"); }
+        public static List<string> LibraryNames(string suffix) { List<string> l = new List<string>(); foreach (string k in libRead.Keys) if (k.EndsWith(suffix)) l.Add(k); l.Sort(StringComparer.Ordinal); return l; }
+        public static string LibraryPath(string file) { string p; return libRead.TryGetValue(file.ToLowerInvariant(), out p) ? p : null; }
+        // the textures a model's shaders use (lower case)
+        public static HashSet<string> TexturesOf(string model)
+        {
+            HashSet<string> r = new HashSet<string>(); string f; long sz; DrawableBase d = OpenDrawable(model, out f, out sz); if (d == null || d.ShaderGroup == null || d.ShaderGroup.Shaders == null) return r;
+            foreach (ShaderFX s in d.ShaderGroup.Shaders.data_items) { if (s == null || s.ParametersList == null) continue; foreach (ShaderParameter p in s.ParametersList.Parameters) { TextureBase t = p.Data as TextureBase; if (t != null && !string.IsNullOrEmpty(t.Name)) r.Add(t.Name.ToLowerInvariant()); } }
+            return r;
+        }
+        // the user's texture dictionary a prop of theirs needs: the one of its own name, else the first that holds one of its textures (null: its textures are in the model)
+        static Dictionary<string, HashSet<string>> libTex = new Dictionary<string, HashSet<string>>();
+        public static string LibraryYtdFor(string model)
+        {
+            string own = model.ToLowerInvariant() + ".ytd"; if (libRead.ContainsKey(own)) return own;
+            HashSet<string> want = TexturesOf(model); if (want.Count == 0) return null;
+            foreach (string y in LibraryNames(".ytd"))
+            {
+                HashSet<string> names;
+                lock (libTex) libTex.TryGetValue(y, out names);
+                if (names == null)
+                {
+                    names = new HashSet<string>();
+                    try { RpfFileEntry fe; byte[] b = Bytes(y, out fe); YtdFile t = new YtdFile(); t.Load(b, fe); if (t.TextureDict != null && t.TextureDict.Textures != null) foreach (Texture x in t.TextureDict.Textures.data_items) names.Add((x.Name ?? "").ToLowerInvariant()); } catch (Exception) { }
+                    lock (libTex) libTex[y] = names;
+                }
+                foreach (string w in want) if (names.Contains(w)) return y;
+            }
+            return null;
         }
 
         // ---------------- ymap extents index (built once, then cached on disk) ----------------
@@ -125,6 +257,37 @@ namespace MloCreator
             File.WriteAllText(f, sb.ToString()); ymapIdx = list; Status = "";
         }
 
+        // the map files whose entities reach into a box of the world (x / y), the lod and occlusion files left out
+        public static List<string> YmapsAt(double x0, double y0, double x1, double y1)
+        {
+            EnsureYmapIndex(); List<string> l = new List<string>();
+            foreach (YmapInfo yi in ymapIdx)
+            {
+                if (yi.X1 < x0 || yi.X0 > x1 || yi.Y1 < y0 || yi.Y0 > y1) continue;
+                string n = yi.Name; if (n.IndexOf("_lod", StringComparison.Ordinal) >= 0 || n.IndexOf("occl", StringComparison.Ordinal) >= 0 || n.IndexOf("lodlights", StringComparison.Ordinal) >= 0) continue;
+                l.Add(n);
+            }
+            return l;
+        }
+        public static bool HasModel(string name) { return HasDrawable(name); }
+        // Does a model carry its own collision (built into it, like a chair or a door)? One that does not (a counter, a shelf, a piece of the building) has its
+        // collision in the collision files of the interior or the map round it.
+        static Dictionary<string, bool> ownCol = new Dictionary<string, bool>();
+        public static bool HasOwnCollision(string name)
+        {
+            string k = name.ToLowerInvariant(); bool b; lock (ownCol) if (ownCol.TryGetValue(k, out b)) return b;
+            // (a model that breaks or moves, .yft, has its collision in its physics: its own too)
+            try { string f; long sz; DrawableBase d = OpenDrawable(k, out f, out sz); Drawable dr = d as Drawable; b = d != null && (f.EndsWith(".yft") || (dr != null && dr.Bound != null)); } catch (Exception) { b = false; }
+            lock (ownCol) ownCol[k] = b; return b;
+        }
+        // a model's box ([min, max] in its own frame) and the size of its file (bytes), or null
+        public static Vector3[] ModelBox(string name, out long size)
+        {
+            size = 0; string k = name.ToLowerInvariant();
+            if (Has(k + ".ydr")) size = SizeOf(k + ".ydr"); else if (Has(k + ".yft")) size = SizeOf(k + ".yft");
+            return PropBox(name);
+        }
+
         // ---------------- finding the map pieces around a point ----------------
         static Dictionary<string, Vector3[]> bboxCache = new Dictionary<string, Vector3[]>();
 
@@ -132,11 +295,11 @@ namespace MloCreator
         static DrawableBase OpenDrawable(string name, out string file, out long size)
         {
             string k = name.ToLowerInvariant(); RpfFileEntry e; file = null; size = 0;
-            if (ent.TryGetValue(k + ".ydr", out e)) { file = k + ".ydr"; size = e.GetFileSize(); YdrFile y = new YdrFile(); y.Load(own[file].ExtractFile(e), e); return y.Drawable; }
-            if (ent.TryGetValue(k + ".yft", out e)) { file = k + ".yft"; size = e.GetFileSize(); YftFile f = new YftFile(); f.Load(own[file].ExtractFile(e), e); return f.Fragment != null ? f.Fragment.Drawable : null; }
+            if (Has(k + ".ydr")) { file = k + ".ydr"; size = SizeOf(file); YdrFile y = new YdrFile(); y.Load(Bytes(file, out e), e); return y.Drawable; }
+            if (Has(k + ".yft")) { file = k + ".yft"; size = SizeOf(file); YftFile f = new YftFile(); f.Load(Bytes(file, out e), e); return f.Fragment != null ? f.Fragment.Drawable : null; }
             return null;
         }
-        static bool HasDrawable(string name) { string k = name.ToLowerInvariant(); return ent.ContainsKey(k + ".ydr") || ent.ContainsKey(k + ".yft"); }
+        static bool HasDrawable(string name) { string k = name.ToLowerInvariant(); return Has(k + ".ydr") || Has(k + ".yft"); }
 
         static Vector3[] DrawableBox(string name, out RpfFileEntry entry)
         {
@@ -153,7 +316,7 @@ namespace MloCreator
             bboxCache[k] = bb; return bb;
         }
         // the same for any prop, fragments too (a prop's bounding box)
-        static Vector3[] PropBox(string name)
+        public static Vector3[] PropBox(string name)
         {
             string ck = "prop|" + name.ToLowerInvariant(); Vector3[] bb; if (bboxCache.TryGetValue(ck, out bb)) return bb;
             try { string f; long sz; DrawableBase d = OpenDrawable(name, out f, out sz); bb = d == null ? null : new Vector3[] { d.BoundingBoxMin, d.BoundingBoxMax }; } catch (Exception) { bb = null; }
@@ -451,7 +614,8 @@ namespace MloCreator
             archYtyp = idx; Status = "";
         }
         // the map types file that defines an archetype, or null
-        public static string YtypOf(uint hash) { EnsureArchetypeIndex(); string yt; return archYtyp.TryGetValue(hash, out yt) ? yt : null; }
+        public static bool GameHasArchetype(uint hash) { EnsureArchetypeIndex(); return archYtyp.ContainsKey(hash); }          // (the game's own, not an opened resource's)
+        public static string YtypOf(uint hash) { string yt; if (looseArch.TryGetValue(hash, out yt)) return yt; EnsureArchetypeIndex(); return archYtyp.TryGetValue(hash, out yt) ? yt : null; }
         // The map types files a set of props needs that the game does not always have loaded: the ones of its interiors (an apartment's furniture, the props of
         // the game's own interiors). Returns ytyp name -> the props of the list it defines.
         public static Dictionary<string, List<string>> InteriorYtypsFor(IEnumerable<string> names)
@@ -468,6 +632,7 @@ namespace MloCreator
         // a file of the game as it is on disk (resource header, compressed), or null
         public static byte[] ResourceFile(string name)
         {
+            string lp; if (looseRead.TryGetValue(name.ToLowerInvariant(), out lp) || libRead.TryGetValue(name.ToLowerInvariant(), out lp)) { byte[] b = File.ReadAllBytes(lp); return b.Length >= 16 && BitConverter.ToUInt32(b, 0) == 0x37435352 ? b : null; }
             RpfFile o; RpfFileEntry fe = GetEntry(name.ToLowerInvariant(), out o); RpfResourceFileEntry rre = fe as RpfResourceFileEntry; if (rre == null) return null;
             return ResourceBuilder.AddResourceHeader(rre, ResourceBuilder.Compress(o.ExtractFile(fe)));
         }
@@ -534,22 +699,39 @@ namespace MloCreator
             // the dictionaries to read, in order: the archetype's, one named like the model, the others in the model's archive; each followed by its parents
             List<uint> order = new List<uint>(); HashSet<uint> queued = new HashSet<uint>();
             Action<uint> add = null; add = delegate (uint th) { int depth = 0; while (th != 0 && depth++ < 16 && queued.Add(th)) { order.Add(th); uint p; if (!parentTxd.TryGetValue(th, out p)) break; th = p; } };
+            uint lt; if (looseTxd.TryGetValue(JenkHash.GenHash(model), out lt)) add(lt);          // (a model of the opened resource: its archetype names its dictionary)
             add(ArchetypeTxd(model, ydr != null ? owner : null));
             add(JenkHash.GenHash(model));
             if (ydr != null && owner.AllEntries != null) foreach (RpfEntry e in owner.AllEntries) { RpfFileEntry fe = e as RpfFileEntry; if (fe != null && fe.Name.EndsWith(".ytd", StringComparison.OrdinalIgnoreCase)) add(JenkHash.GenHash(Path.GetFileNameWithoutExtension(fe.Name).ToLowerInvariant())); }
             foreach (uint th in order)
             {
                 if (found.Count >= wanted.Count) break;
-                string name; if (!ytdByHash.TryGetValue(th, out name)) continue;
-                RpfFile o; RpfFileEntry fe = GetEntry(name, out o); if (fe == null) continue;
+                string name; if (!looseYtd.TryGetValue(th, out name) && !ytdByHash.TryGetValue(th, out name)) continue;
+                RpfFileEntry fe; byte[] data; try { data = Bytes(name, out fe); } catch (Exception) { continue; } if (data == null) continue;
                 try
                 {
-                    YtdFile ytd = new YtdFile(); ytd.Load(o.ExtractFile(fe), fe); searched.Add(name);
+                    YtdFile ytd = new YtdFile(); ytd.Load(data, fe); searched.Add(name);
                     if (ytd.TextureDict == null || ytd.TextureDict.Textures == null) continue;
                     foreach (Texture t in ytd.TextureDict.Textures.data_items)
                     {
                         string tn = (t.Name ?? "").ToLowerInvariant(); if (wanted.Contains(tn) && !found.ContainsKey(tn)) found[tn] = t;
                     }
+                }
+                catch (Exception) { }
+            }
+            // the opened resource's other dictionaries (an MLO's models often share one)
+            // (and the user's: the dictionary of the prop's own name first)
+            List<string> extra = new List<string>(); string ownYtd = model + ".ytd"; if (libRead.ContainsKey(ownYtd)) extra.Add(ownYtd);
+            foreach (string y in LibraryNames(".ytd")) if (y != ownYtd) extra.Add(y);
+            extra.AddRange(LooseNames(".ytd"));
+            foreach (string name in extra)
+            {
+                if (found.Count >= wanted.Count) break; if (searched.Contains(name)) continue;
+                try
+                {
+                    RpfFileEntry fe; byte[] data = Bytes(name, out fe); YtdFile ytd = new YtdFile(); ytd.Load(data, fe); searched.Add(name);
+                    if (ytd.TextureDict == null || ytd.TextureDict.Textures == null) continue;
+                    foreach (Texture t in ytd.TextureDict.Textures.data_items) { string tn = (t.Name ?? "").ToLowerInvariant(); if (wanted.Contains(tn) && !found.ContainsKey(tn)) found[tn] = t; }
                 }
                 catch (Exception) { }
             }

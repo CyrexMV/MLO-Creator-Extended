@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -82,7 +83,8 @@ namespace MloCreator
         }
 
         // ---------- file / folder pickers (a Windows dialog, run on its own thread) ----------
-        public static string[] Pick(bool folder)
+        public static string[] PickFiles(string title, string filter) { return Pick(false, title, filter); }
+        public static string[] Pick(bool folder, string description = null, string filter = null)
         {
             string[] result = null; string last = null;
             try { string lf = Path.Combine(cacheDir, "last_import_dir.txt"); if (File.Exists(lf)) last = File.ReadAllText(lf).Trim(); } catch { }
@@ -95,7 +97,7 @@ namespace MloCreator
                     {
                         using (FolderBrowserDialog d = new FolderBrowserDialog())
                         {
-                            d.Description = "Pick the folder that holds the model files (.ydr, .ytd, .ybn, .ymap, .glb)"; if (!string.IsNullOrEmpty(last) && Directory.Exists(last)) d.SelectedPath = last;
+                            d.Description = description ?? "Pick the folder that holds the model files (.ydr, .ytd, .ybn, .ymap, .glb)"; if (!string.IsNullOrEmpty(last) && Directory.Exists(last)) d.SelectedPath = last;
                             if (d.ShowDialog(f) == DialogResult.OK) result = new string[] { d.SelectedPath };
                         }
                     }
@@ -103,7 +105,7 @@ namespace MloCreator
                     {
                         using (OpenFileDialog d = new OpenFileDialog())
                         {
-                            d.Multiselect = true; d.Title = "Import model files"; d.Filter = "Model files (*.ydr;*.ytd;*.ybn;*.ymap;*.glb)|*.ydr;*.ytd;*.ybn;*.ymap;*.glb|All files (*.*)|*.*";
+                            d.Multiselect = true; d.Title = description ?? "Import model files"; d.Filter = filter ?? "Model files (*.ydr;*.ytd;*.ybn;*.ymap;*.glb)|*.ydr;*.ytd;*.ybn;*.ymap;*.glb|All files (*.*)|*.*";
                             if (!string.IsNullOrEmpty(last) && Directory.Exists(last)) d.InitialDirectory = last;
                             if (d.ShowDialog(f) == DialogResult.OK) result = d.FileNames;
                         }
@@ -185,6 +187,8 @@ namespace MloCreator
             r["files"] = files; r["textures"] = texs; return r;
         }
         // positions / normals / uvs of one geometry in the shape the editor wants
+        public static Dictionary<string, object> GeomJsonOf(GeomData g, int no, float[] V, int[] Idx) { return GeomJson(g, no, V, Idx); }
+        public static string B64Of(int[] v) { return B64(v); }
         static Dictionary<string, object> GeomJson(GeomData g, int no, float[] V, int[] Idx)
         {
             int S = g.Stride, nv = V.Length / S; float[] p = new float[nv * 3], n = new float[nv * 3], uv = new float[nv * 2];
@@ -196,7 +200,7 @@ namespace MloCreator
             }
             ushort[] ix = new ushort[Idx.Length]; for (int i = 0; i < ix.Length; i++) ix[i] = (ushort)Idx[i];
             Dictionary<string, object> d = new Dictionary<string, object>();
-            d["g"] = no; d["tex"] = g.Tex; d["shader"] = g.ShaderName; d["bucket"] = g.Bucket; d["tris"] = Idx.Length / 3;
+            d["g"] = no; d["si"] = g.Shader; d["tex"] = g.Tex; d["shader"] = g.ShaderName; d["bucket"] = g.Bucket; d["tris"] = Idx.Length / 3;
             d["pos"] = B64(p); d["nrm"] = B64(n); d["uv"] = B64(uv); d["idx"] = B64(ix);
             return d;
         }
@@ -709,12 +713,17 @@ namespace MloCreator
                     if (all) hits.Add(stem);
                 }
             hits.Sort(StringComparer.Ordinal);
+            // the opened resource's own models first (any name)
+            List<string> own = new List<string>();
+            if (words.Count > 0) foreach (string n in Vanilla.LibraryNames(".ydr").Concat(Vanilla.LooseNames(".ydr"))) { string stem = n.Substring(0, n.Length - 4); bool all = true; foreach (System.Text.RegularExpressions.Regex w in words) if (!w.IsMatch(stem)) { all = false; break; } if (all && !hits.Contains(stem)) own.Add(stem); }
+            hits.InsertRange(0, own);
             List<object> list = new List<object>(); foreach (string h in hits) { if (list.Count >= 400) break; list.Add(h); }
             return list;
         }
 
         // a prop's model for the view: its most detailed geometries (in its own frame: the origin is where the game puts the entity), their textures, its box
         static Dictionary<string, Dictionary<string, object>> furnCache = new Dictionary<string, Dictionary<string, object>>();
+        public static void ForgetModels() { lock (furnCache) furnCache.Clear(); }
         public static Dictionary<string, object> FurnitureModels(List<string> names, string gta)
         {
             Vanilla.Init(gta, cacheDir); Dictionary<string, object> res = new Dictionary<string, object>();
@@ -728,10 +737,9 @@ namespace MloCreator
                     d = new Dictionary<string, object>();
                     try
                     {
-                        RpfFile owner; RpfFileEntry fe = Vanilla.GetEntry(n + ".ydr", out owner); RpfResourceFileEntry rre = fe as RpfResourceFileEntry; bool frag = false;
-                        if (rre == null) { fe = Vanilla.GetEntry(n + ".yft", out owner); rre = fe as RpfResourceFileEntry; frag = rre != null; }          // (a prop that breaks or moves)
-                        if (rre == null) throw new Exception("The game has no model " + n + " (.ydr or .yft).");
-                        byte[] file = ResourceBuilder.AddResourceHeader(rre, ResourceBuilder.Compress(owner.ExtractFile(fe)));
+                        byte[] file = Vanilla.ResourceFile(n + ".ydr"); bool frag = false;          // (the opened resource's model first, then the game's)
+                        if (file == null) { file = Vanilla.ResourceFile(n + ".yft"); frag = file != null; }          // (a prop that breaks or moves)
+                        if (file == null) throw new Exception((Vanilla.ResourceDir != null ? "Neither the resource nor the game has" : "The game has no") + " model " + n + " (.ydr or .yft).");
                         string tex = Path.Combine(cacheDir, "furniture", n);
                         if (Directory.Exists(tex)) { try { Directory.Delete(tex, true); } catch { } }
                         ModelDoc md = frag ? ModelDoc.LoadFragment(file, tex, n) : ModelDoc.Load(file, tex, n);
@@ -753,6 +761,10 @@ namespace MloCreator
                         HashSet<string> rest = new HashSet<string>(); foreach (string w in wanted) if (!got.Contains(w)) rest.Add(w);
                         if (rest.Count > 0) foreach (KeyValuePair<string, Texture> kv in Vanilla.FindTextures(n, rest, new List<string>())) { Dictionary<string, object> tj = TexJson(kv.Key, kv.Value); if (tj != null) texs.Add(tj); }
                         d["geoms"] = gl; d["textures"] = texs; d["bmin"] = mn; d["bmax"] = mx;
+                        int build; d["dlc"] = Vanilla.DlcOf(n, out build); d["build"] = build;          // (a prop of a later DLC than the server's game build does not show)
+                        d["lights"] = Vanilla.LightsOf(n); d["frag"] = frag;              // (its lights, for the night preview and to change them)
+                        d["col"] = Vanilla.HasOwnCollision(n);                  // (its collision is built in: it goes with it; else it was in its interior's files)
+                        if (!(bool)d["col"]) d["colBoxes"] = Vanilla.PropCollisionBoxes(n) ?? new List<double[]>();          // (then boxes of its shape, PropCollision.cs)
                     }
                     catch (Exception ex) { d["error"] = ex.Message; }
                     lock (furnCache) furnCache[n] = d;

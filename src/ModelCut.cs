@@ -141,7 +141,7 @@ namespace MloCreator
                         GeomData g = new GeomData(); g.Lod = lod; g.Model = mi; g.Index = gi; g.Node = gn;
                         XmlNode si = gn.SelectSingleNode("ShaderIndex"); g.Shader = si != null ? int.Parse(si.Attributes["value"].Value, CultureInfo.InvariantCulture) : 0;
                         if (g.Shader >= 0 && g.Shader < md.ShaderNames.Count) { g.ShaderName = md.ShaderNames[g.Shader]; g.Tex = md.ShaderTex[g.Shader]; g.Bucket = md.ShaderBucket[g.Shader]; }
-                        XmlNode lay = gn.SelectSingleNode("VertexBuffer/Layout"); XmlNode data = gn.SelectSingleNode("VertexBuffer/Data"), idx = gn.SelectSingleNode("IndexBuffer/Data");
+                        XmlNode lay = gn.SelectSingleNode("VertexBuffer/Layout"); XmlNode data = VData(gn), idx = gn.SelectSingleNode("IndexBuffer/Data");
                         if (lay == null || data == null || idx == null) { gi++; continue; }
                         List<string> comps = new List<string>(); List<int> sizes = new List<int>(); List<bool> ints = new List<bool>(); int stride = 0;
                         foreach (XmlNode c in lay.ChildNodes)
@@ -165,6 +165,8 @@ namespace MloCreator
             }
         }
 
+        // a geometry's vertices: CodeWalker writes them as Data, or as Data2 when the model keeps them there (some exporters do)
+        static XmlNode VData(XmlNode geom) { return geom.SelectSingleNode("VertexBuffer/Data") ?? geom.SelectSingleNode("VertexBuffer/Data2"); }
         static string FloatText(float v) { return v.ToString("R", CultureInfo.InvariantCulture); }
 
         // writes the cut geometry back into the XML and builds the .ydr
@@ -201,12 +203,12 @@ namespace MloCreator
             {
                 if (empty.Contains(o))
                 {
-                    if (stubs.Contains(o.Src.Node) && o.Src.VText != null) { o.Src.Node.SelectSingleNode("VertexBuffer/Data").InnerText = o.Src.VText; o.Src.Node.SelectSingleNode("IndexBuffer/Data").InnerText = "0 0 0"; }
+                    if (stubs.Contains(o.Src.Node) && o.Src.VText != null) { VData(o.Src.Node).InnerText = o.Src.VText; o.Src.Node.SelectSingleNode("IndexBuffer/Data").InnerText = "0 0 0"; }
                     continue;
                 }
                 if (!o.Changed)
                 {
-                    if (o.Src.VText != null) { o.Src.Node.SelectSingleNode("VertexBuffer/Data").InnerText = o.Src.VText; o.Src.Node.SelectSingleNode("IndexBuffer/Data").InnerText = o.Src.IText; }
+                    if (o.Src.VText != null) { VData(o.Src.Node).InnerText = o.Src.VText; o.Src.Node.SelectSingleNode("IndexBuffer/Data").InnerText = o.Src.IText; }
                     continue;
                 }
                 GeomData g = o.Src; int S = g.Stride, nv = o.V.Length / S;
@@ -227,7 +229,7 @@ namespace MloCreator
                     sb.Append('\n');
                 }
                 sb.Append("      ");
-                g.Node.SelectSingleNode("VertexBuffer/Data").InnerText = sb.ToString();
+                VData(g.Node).InnerText = sb.ToString();
                 StringBuilder ib = new StringBuilder();
                 for (int i = 0; i < o.Idx.Length; i++) { if (i > 0) ib.Append(' '); ib.Append(o.Idx[i].ToString(CultureInfo.InvariantCulture)); }
                 g.Node.SelectSingleNode("IndexBuffer/Data").InnerText = ib.ToString();

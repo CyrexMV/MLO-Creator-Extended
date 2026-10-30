@@ -16,3 +16,12 @@ dist/
 .vscode/
 Thumbs.db
 desktop.ini
+
+# the live editor's sessions (projects sent to a server)
+fivem/mlo_creator_live/data/*.json
+
+# your own props (the props folder next to the program)
+props/
+
+# python caches
+__pycache__/

@@ -13,6 +13,7 @@ Copy-Item -LiteralPath "$here\MloCreator.exe.config" -Destination (Join-Path $De
 Copy-Item -LiteralPath "$here\lib" -Destination (Join-Path $Dest 'lib') -Recurse
 Copy-Item -LiteralPath "$here\ui" -Destination (Join-Path $Dest 'ui') -Recurse
 Copy-Item -LiteralPath "$here\models" -Destination (Join-Path $Dest 'models') -Recurse
+Copy-Item -LiteralPath "$here\fivem" -Destination (Join-Path $Dest 'fivem') -Recurse          # (the live editor for FiveM, put into the server by the program)
 Copy-Item -LiteralPath "$here\docs" -Destination (Join-Path $Dest 'docs') -Recurse
 Copy-Item -LiteralPath "$here\README.md" -Destination (Join-Path $Dest 'README.md')
 Copy-Item -LiteralPath "$here\THIRD-PARTY-NOTICES.md" -Destination (Join-Path $Dest 'THIRD-PARTY-NOTICES.md')

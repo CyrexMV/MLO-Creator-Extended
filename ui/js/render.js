@@ -44,7 +44,13 @@ window.MLO = window.MLO || {};
 
     const VS = 'attribute vec3 aPos;attribute vec3 aNrm;attribute vec2 aUv;uniform mat4 uVP;varying vec3 vN;varying vec2 vUv;varying vec3 vW;void main(){vN=aNrm;vUv=aUv;vW=aPos;gl_Position=uVP*vec4(aPos,1.0);}';
     // uClip: x, y of the centre, squared radius (0 = no clip), highest z that is drawn; used to look into an imported model
-    const FS = 'precision mediump float;uniform sampler2D uTex;uniform vec3 uSun;uniform vec4 uTint;uniform vec4 uClip;uniform float uCut;varying vec3 vN;varying vec2 vUv;varying vec3 vW;void main(){if(uClip.z>0.0){vec2 q=vW.xy-uClip.xy;if(dot(q,q)>uClip.z||vW.z>uClip.w)discard;}vec4 t=texture2D(uTex,vUv);if(uCut>0.0&&t.a<uCut)discard;vec3 n=normalize(vN);float d=max(dot(n,uSun),0.0);float l=0.50+0.42*d+0.10*max(n.z,0.0);gl_FragColor=vec4(t.rgb*l*uTint.rgb,uCut>0.0?uTint.a*t.a:uTint.a);}';
+    // uNight 1: the preview at night, lit by up to 16 lights: uLP position and range, uLC colour times brightness and the softness, uLD the direction of a spot and
+    // the cosine of its cone (-2: a point light)
+    const FS = 'precision mediump float;uniform sampler2D uTex;uniform vec3 uSun;uniform vec4 uTint;uniform vec4 uClip;uniform float uCut;uniform float uNight;uniform int uNL;uniform vec4 uLP[16];uniform vec4 uLC[16];uniform vec4 uLD[16];varying vec3 vN;varying vec2 vUv;varying vec3 vW;'
+        + 'void main(){if(uClip.z>0.0){vec2 q=vW.xy-uClip.xy;if(dot(q,q)>uClip.z||vW.z>uClip.w)discard;}vec4 t=texture2D(uTex,vUv);if(uCut>0.0&&t.a<uCut)discard;vec3 n=normalize(vN);'
+        + 'vec3 l;if(uNight>0.5){l=vec3(0.07,0.075,0.10)*(0.7+0.3*max(n.z,0.0));for(int i=0;i<16;i++){if(i>=uNL)break;vec3 d=uLP[i].xyz-vW;float r=length(d);if(r>uLP[i].w)continue;vec3 dn=d/max(r,0.001);'
+        + 'float a=pow(max(0.0,1.0-r/uLP[i].w),uLC[i].w);float s=1.0;if(uLD[i].w>-1.5){float c=dot(-dn,uLD[i].xyz);s=smoothstep(uLD[i].w,uLD[i].w+0.12,c);}l+=uLC[i].rgb*a*s*(0.25+0.75*max(dot(n,dn),0.0));}}'
+        + 'else{float d=max(dot(n,uSun),0.0);l=vec3(0.50+0.42*d+0.10*max(n.z,0.0));}gl_FragColor=vec4(t.rgb*l*uTint.rgb,uCut>0.0?uTint.a*t.a:uTint.a);}';
     const VS2 = 'attribute vec3 aPos;attribute vec4 aCol;uniform mat4 uVP;varying vec4 vC;void main(){vC=aCol;gl_Position=uVP*vec4(aPos,1.0);}';
     const FS2 = 'precision mediump float;varying vec4 vC;void main(){gl_FragColor=vC;}';
 
@@ -58,14 +64,14 @@ window.MLO = window.MLO || {};
             gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p;
         };
         this.pLit = mk(VS, FS); this.pFlat = mk(VS2, FS2);
-        const L = this.lit = { aPos: gl.getAttribLocation(this.pLit, 'aPos'), aNrm: gl.getAttribLocation(this.pLit, 'aNrm'), aUv: gl.getAttribLocation(this.pLit, 'aUv'), uVP: gl.getUniformLocation(this.pLit, 'uVP'), uTex: gl.getUniformLocation(this.pLit, 'uTex'), uSun: gl.getUniformLocation(this.pLit, 'uSun'), uTint: gl.getUniformLocation(this.pLit, 'uTint'), uClip: gl.getUniformLocation(this.pLit, 'uClip'), uCut: gl.getUniformLocation(this.pLit, 'uCut') };
+        const L = this.lit = { aPos: gl.getAttribLocation(this.pLit, 'aPos'), aNrm: gl.getAttribLocation(this.pLit, 'aNrm'), aUv: gl.getAttribLocation(this.pLit, 'aUv'), uVP: gl.getUniformLocation(this.pLit, 'uVP'), uTex: gl.getUniformLocation(this.pLit, 'uTex'), uSun: gl.getUniformLocation(this.pLit, 'uSun'), uTint: gl.getUniformLocation(this.pLit, 'uTint'), uClip: gl.getUniformLocation(this.pLit, 'uClip'), uCut: gl.getUniformLocation(this.pLit, 'uCut'), uNight: gl.getUniformLocation(this.pLit, 'uNight'), uNL: gl.getUniformLocation(this.pLit, 'uNL'), uLP: gl.getUniformLocation(this.pLit, 'uLP'), uLC: gl.getUniformLocation(this.pLit, 'uLC'), uLD: gl.getUniformLocation(this.pLit, 'uLD') };
         this.flat = { aPos: gl.getAttribLocation(this.pFlat, 'aPos'), aCol: gl.getAttribLocation(this.pFlat, 'aCol'), uVP: gl.getUniformLocation(this.pFlat, 'uVP') };
         this.white = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, this.white);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
         this.bufs = []; this.mbufs = []; this.clip = null; this.gridBuf = null; this.gridCount = 0; this.statics = {};
         this.ovTris = []; this.ovLines = []; this.ovTopTris = []; this.ovTopLines = []; this.ovBuf = gl.createBuffer();
-        this.clear = [0.066, 0.07, 0.08];
+        this.clear = [0.043, 0.047, 0.078];
         const sun = [-0.45, -0.6, 0.66], sl = Math.hypot(sun[0], sun[1], sun[2]); this.sun = sun.map(v => v / sl);
         this.resize();
     }
@@ -113,7 +119,7 @@ window.MLO = window.MLO || {};
 
     Renderer.prototype.setGrid = function (z, ext, cx, cy) {
         const gl = this.gl, v = [], x0 = cx - ext, x1 = cx + ext, y0 = cy - ext, y1 = cy + ext;
-        const col = (major) => major ? [1.0, 0.62, 0.36, 0.30] : [0.78, 0.80, 0.86, 0.11];          // (every fifth metre in the accent colour)
+        const col = (major) => major ? [0.58, 0.50, 1.0, 0.34] : [0.70, 0.75, 0.95, 0.10];          // (every fifth metre in the accent colour)
         for (let i = x0; i <= x1; i++) { const c = col(i % 5 === 0); v.push(i, y0, z, ...c, i, y1, z, ...c); }
         for (let j = y0; j <= y1; j++) { const c = col(j % 5 === 0); v.push(x0, j, z, ...c, x1, j, z, ...c); }
         if (!this.gridBuf) this.gridBuf = gl.createBuffer();
@@ -167,6 +173,13 @@ window.MLO = window.MLO || {};
 
         const L = this.lit, drawBatches = (glassPass) => {
             gl.useProgram(this.pLit); gl.uniformMatrix4fv(L.uVP, false, cam.vp); gl.uniform3fv(L.uSun, this.sun); gl.uniform1i(L.uTex, 0);
+            // by night: the lights the page gives (lightsFn: [{ p, r (range), c (colour times brightness), e (softness), d (spot direction), cone (its cosine) }])
+            const night = this.lightsFn ? this.lightsFn(cam) : null; gl.uniform1f(L.uNight, night ? 1 : 0);
+            if (night) {
+                const n = Math.min(16, night.length), lp = new Float32Array(64), lc = new Float32Array(64), ld = new Float32Array(64);
+                for (let i = 0; i < n; i++) { const q = night[i]; lp.set([q.p[0], q.p[1], q.p[2], q.r], i * 4); lc.set([q.c[0], q.c[1], q.c[2], q.e], i * 4); ld.set(q.d ? [q.d[0], q.d[1], q.d[2], q.cone] : [0, 0, -1, -2], i * 4); }
+                gl.uniform1i(L.uNL, n); gl.uniform4fv(L.uLP, lp); gl.uniform4fv(L.uLC, lc); gl.uniform4fv(L.uLD, ld);
+            }
             gl.enableVertexAttribArray(L.aPos); gl.enableVertexAttribArray(L.aNrm); gl.enableVertexAttribArray(L.aUv);
             const cl = this.clip;
             for (const list of [this.bufs, this.mbufs]) for (const o of list) {

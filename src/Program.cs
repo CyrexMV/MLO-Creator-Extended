@@ -103,6 +103,17 @@ namespace MloCreator
                     catch (Exception ex) { Console.WriteLine("FAILED: " + ex); }
                     return 0;
                 }
+                if (args[i] == "--outside-probe" && i + 4 < args.Length)
+                {
+                    // command-line probe: MloCreator.exe --outside-probe x y z heading   (the map's objects 20 m round that point, and how CodeWalker turns the first ones)
+                    try
+                    {
+                        double[] v = new double[4]; for (int k = 0; k < 4; k++) v[k] = double.Parse(args[i + 1 + k], CultureInfo.InvariantCulture);
+                        foreach (string l in Buildings.OutsideProbe(v, GtaDefault(), Path.Combine(Root, "cache"))) Console.WriteLine(l);
+                    }
+                    catch (Exception ex) { Console.WriteLine("FAILED: " + ex); }
+                    return 0;
+                }
                 if (args[i] == "--no-window") NoWindow = true;
                 else if (args[i] == "--browser") UseBrowser = true;
                 else if (args[i] == "--devtools") DevTools = true;
@@ -266,6 +277,17 @@ namespace MloCreator
         }
 
         static void Json200(HttpListenerContext c, Dictionary<string, object> d) { Reply(c, 200, Json.Serialize(d), "application/json"); }
+        // the files of the MLO resource a project opened (Vanilla.UseResource): src and snap of the body or of its game; none for the game's own interiors
+        static void UseSource(Dictionary<string, object> body)
+        {
+            string src = J.S(J.G(body, "src"), null), snap = J.S(J.G(body, "snap"), null); Dictionary<string, object> g = J.O(J.G(body, "game"));
+            if (string.IsNullOrEmpty(src) && g != null) { src = J.S(J.G(g, "src"), null); snap = J.S(J.G(g, "snap"), null); }
+            Vanilla.UseResource(string.IsNullOrEmpty(src) ? null : src, string.IsNullOrEmpty(snap) ? null : snap);
+            Vanilla.UseLibrary(PropsDir);
+        }
+        static List<object> OwnProps() { List<object> l = new List<object>(); foreach (string f in Vanilla.LibraryNames(".ydr")) l.Add(f.Substring(0, f.Length - 4)); return l; }
+        // the user's own props (MyProps.cs): .ydr and .ytd files in the props folder next to the program
+        static string PropsDir { get { return Path.Combine(Root, "props"); } }
 
         // ---------- importing model files into a project ----------
         static void HandleImport(HttpListenerContext c, string api, string method, string name)
@@ -359,7 +381,7 @@ namespace MloCreator
             {
                 Dictionary<string, object> body = Json.DeserializeObject(ReadBody(c)) as Dictionary<string, object>;
                 string gta = J.S(J.G(body, "gta"), null); if (string.IsNullOrWhiteSpace(gta)) gta = GtaDefault();
-                try { r["names"] = ImportHost.FurnitureSearch(J.S(J.G(body, "q"), ""), gta); } catch (Exception) { Vanilla.Status = ""; throw; }
+                try { Vanilla.UseLibrary(PropsDir); if (body != null && body.ContainsKey("src")) UseSource(body); r["names"] = ImportHost.FurnitureSearch(J.S(J.G(body, "q"), ""), gta); r["own"] = OwnProps(); } catch (Exception) { Vanilla.Status = ""; throw; }
                 Json200(c, r); return;
             }
             if (api == "furniture-models" && method == "POST")
@@ -367,7 +389,7 @@ namespace MloCreator
                 Dictionary<string, object> body = Json.DeserializeObject(ReadBody(c)) as Dictionary<string, object>; List<string> names = new List<string>();
                 foreach (object o in J.A(J.G(body, "names"))) names.Add(J.S(o, ""));
                 string gta = J.S(J.G(body, "gta"), null); if (string.IsNullOrWhiteSpace(gta)) gta = GtaDefault();
-                try { r["models"] = ImportHost.FurnitureModels(names, gta); } catch (Exception) { Vanilla.Status = ""; throw; }
+                try { Vanilla.UseLibrary(PropsDir); r["models"] = ImportHost.FurnitureModels(names, gta); r["serverBuild"] = Vanilla.ServerBuild((string)Settings()["outDir"]); } catch (Exception) { Vanilla.Status = ""; throw; }
                 Json200(c, r); return;
             }
             if (api == "game-textures" && method == "POST")
@@ -595,9 +617,73 @@ namespace MloCreator
                 string gta = J.S(J.G(body, "gta"), null); if (string.IsNullOrWhiteSpace(gta)) gta = GtaDefault();
                 try
                 {
+                    Vanilla.UseResource(null, null);
                     List<string> log = new List<string>(); List<object> found = Buildings.Search(J.S(J.G(body, "q"), ""), gta, Path.Combine(Root, "cache"), log);
                     Json200(c, new Dictionary<string, object> { { "ok", true }, { "results", found }, { "log", log } });
                 }
+                catch (Exception ex) { Vanilla.Status = ""; Reply(c, 200, Json.Serialize(new Dictionary<string, object> { { "ok", false }, { "error", ex.Message } }), "application/json"); }
+                return;
+            }
+            if (api == "buildings/outside" && method == "POST")
+            {
+                // the map's objects round a game interior (Buildings.Outside)
+                Dictionary<string, object> body = Json.DeserializeObject(ReadBody(c)) as Dictionary<string, object>;
+                string gta = J.S(J.G(body, "gta"), null); if (string.IsNullOrWhiteSpace(gta)) gta = GtaDefault();
+                try
+                {
+                    UseSource(body); List<object> a = J.A(J.G(body, "mn")), b = J.A(J.G(body, "mx")); List<string> log = new List<string>();
+                    List<object> found = Buildings.Outside(J.O(J.G(body, "world")), new double[] { J.D(a[0], 0), J.D(a[1], 0), J.D(a[2], 0) }, new double[] { J.D(b[0], 0), J.D(b[1], 0), J.D(b[2], 0) }, J.D(J.G(body, "margin"), 6), gta, Path.Combine(Root, "cache"), log);
+                    Json200(c, new Dictionary<string, object> { { "ok", true }, { "entities", found }, { "log", log } });
+                }
+                catch (Exception ex) { Vanilla.Status = ""; Reply(c, 200, Json.Serialize(new Dictionary<string, object> { { "ok", false }, { "error", ex.Message } }), "application/json"); }
+                return;
+            }
+            if (api.StartsWith("live/") && method == "POST")
+            {
+                // the live editor in FiveM (LiveBridge.cs): put it into the output folder, send a project to it, take the changes from it
+                Dictionary<string, object> body = Json.DeserializeObject(ReadBody(c)) as Dictionary<string, object>;
+                string gta = J.S(J.G(body, "gta"), null); if (string.IsNullOrWhiteSpace(gta)) gta = GtaDefault();
+                string outDir = J.S(J.G(body, "outDir"), null); if (string.IsNullOrWhiteSpace(outDir)) outDir = (string)Settings()["outDir"];
+                try
+                {
+                    Dictionary<string, object> r; UseSource(body);
+                    if (api == "live/install") r = LiveBridge.Install(Root, outDir);
+                    else if (api == "live/send") r = LiveBridge.Send(J.O(J.G(body, "game")), J.S(J.G(body, "project"), ""), outDir, J.B(J.G(body, "force"), false), gta, Path.Combine(Root, "cache"));
+                    else if (api == "live/take") r = LiveBridge.Take(J.S(J.G(body, "project"), ""), outDir);
+                    else { Reply(c, 404, "{\"ok\":false,\"error\":\"unknown live call\"}", "application/json"); return; }
+                    Json200(c, r);
+                }
+                catch (Exception ex) { Vanilla.Status = ""; Reply(c, 200, Json.Serialize(new Dictionary<string, object> { { "ok", false }, { "error", ex.Message } }), "application/json"); }
+                return;
+            }
+            if (api == "buildings/open-resource" && method == "POST")
+            {
+                // an MLO made elsewhere: its resource folder (picked here unless the body names it) and the interiors it defines (Buildings.OpenResource)
+                Dictionary<string, object> body = Json.DeserializeObject(ReadBody(c)) as Dictionary<string, object>;
+                string gta = J.S(J.G(body, "gta"), null); if (string.IsNullOrWhiteSpace(gta)) gta = GtaDefault();
+                try
+                {
+                    string dir = J.S(J.G(body, "dir"), "");
+                    if (dir.Length == 0) { string[] picked = ImportHost.Pick(true, "Pick the folder of the MLO resource (the one with fxmanifest.lua and the stream folder)"); if (picked == null || picked.Length == 0) { Json200(c, new Dictionary<string, object> { { "ok", false }, { "cancelled", true } }); return; } dir = picked[0]; }
+                    Json200(c, Buildings.OpenResource(dir, gta, Path.Combine(Root, "cache")));
+                }
+                catch (Exception ex) { Vanilla.Status = ""; Reply(c, 200, Json.Serialize(new Dictionary<string, object> { { "ok", false }, { "error", ex.Message } }), "application/json"); }
+                return;
+            }
+            if (api == "buildings/model-edit" && method == "POST")
+            {
+                // a game model with its openings and deleted faces, for the view (Buildings.ModelEdit)
+                Dictionary<string, object> body = Json.DeserializeObject(ReadBody(c)) as Dictionary<string, object>;
+                string gta = J.S(J.G(body, "gta"), null); if (string.IsNullOrWhiteSpace(gta)) gta = GtaDefault();
+                try { UseSource(body); Json200(c, Buildings.ModelEdit(J.S(J.G(body, "name"), ""), J.O(J.G(body, "mod")) ?? new Dictionary<string, object>(), gta, Path.Combine(Root, "cache"))); }
+                catch (Exception ex) { Vanilla.Status = ""; Reply(c, 200, Json.Serialize(new Dictionary<string, object> { { "ok", false }, { "error", ex.Message } }), "application/json"); }
+                return;
+            }
+            if (api == "buildings/doors" && method == "POST")
+            {
+                Dictionary<string, object> body = Json.DeserializeObject(ReadBody(c)) as Dictionary<string, object>;
+                string gta = J.S(J.G(body, "gta"), null); if (string.IsNullOrWhiteSpace(gta)) gta = GtaDefault();
+                try { Json200(c, new Dictionary<string, object> { { "ok", true }, { "names", Buildings.DoorSearch(J.S(J.G(body, "q"), ""), gta, Path.Combine(Root, "cache"), J.S(J.G(body, "kind"), "door")) } }); }
                 catch (Exception ex) { Vanilla.Status = ""; Reply(c, 200, Json.Serialize(new Dictionary<string, object> { { "ok", false }, { "error", ex.Message } }), "application/json"); }
                 return;
             }
@@ -607,8 +693,8 @@ namespace MloCreator
                 Dictionary<string, object> body = Json.DeserializeObject(ReadBody(c)) as Dictionary<string, object>;
                 string gta = J.S(J.G(body, "gta"), null); if (string.IsNullOrWhiteSpace(gta)) gta = GtaDefault();
                 string outDir = J.S(J.G(body, "outDir"), null); if (string.IsNullOrWhiteSpace(outDir)) outDir = (string)Settings()["outDir"];
-                try { Dictionary<string, object> r; lock (ExportLock) { Directory.CreateDirectory(outDir); r = Buildings.Export(J.O(J.G(body, "game")), J.S(J.G(body, "resource"), ""), outDir, gta, Path.Combine(Root, "cache")); } Json200(c, r); }
-                catch (Exception ex) { Vanilla.Status = ""; Reply(c, 200, Json.Serialize(new Dictionary<string, object> { { "ok", false }, { "error", ex.Message } }), "application/json"); }
+                try { Dictionary<string, object> r; lock (ExportLock) { UseSource(body); Directory.CreateDirectory(outDir); r = Buildings.Export(J.O(J.G(body, "game")), J.S(J.G(body, "resource"), ""), outDir, gta, Path.Combine(Root, "cache")); } Json200(c, r); }
+                catch (Exception ex) { Vanilla.Status = ""; Reply(c, 200, Json.Serialize(new Dictionary<string, object> { { "ok", false }, { "error", ex.Message }, { "detail", ex.ToString() } }), "application/json"); }
                 return;
             }
             if ((api == "buildings/interior" || api == "buildings/models") && method == "POST")
@@ -619,12 +705,22 @@ namespace MloCreator
                 try
                 {
                     Dictionary<string, object> r = new Dictionary<string, object>(); r["ok"] = true;
-                    if (api == "buildings/interior") r["interior"] = Buildings.Interior(J.S(J.G(body, "ytyp"), ""), (uint)J.D(J.G(body, "hash"), 0), gta, Path.Combine(Root, "cache"));
+                    // (an interior of an MLO resource, opened into a new project: its map files are copied first, every export of the project starts from them)
+                    if (api == "buildings/interior" && J.B(J.G(body, "snapshot"), false) && !string.IsNullOrEmpty(J.S(J.G(body, "src"), ""))) body["snap"] = Buildings.Snapshot(Buildings.ResourceRoot(J.S(J.G(body, "src"), "")), Path.Combine(Root, "cache"));
+                    UseSource(body);
+                    if (api == "buildings/interior")
+                    {
+                        Dictionary<string, object> it = Buildings.Interior(J.S(J.G(body, "ytyp"), ""), (uint)J.D(J.G(body, "hash"), 0), gta, Path.Combine(Root, "cache"));
+                        if (Vanilla.ResourceDir != null) { it["src"] = Vanilla.ResourceDir; it["snap"] = J.S(J.G(body, "snap"), ""); }
+                        r["interior"] = it;
+                    }
                     else
                     {
                         List<string> names = new List<string>(); foreach (object o in J.A(J.G(body, "names"))) names.Add(J.S(o, ""));
                         HashSet<string> have = new HashSet<string>(); foreach (object o in J.A(J.G(body, "have"))) have.Add(J.S(o, "").ToLowerInvariant());
-                        r["models"] = ImportHost.GameModels(names, gta, have);
+                        r["models"] = ImportHost.GameModels(names, gta, have); r["serverBuild"] = Vanilla.ServerBuild((string)Settings()["outDir"]);
+                        // (for the pictures of a list of models: their shapes only)
+                        if (J.B(J.G(body, "notex"), false)) foreach (object mv in ((Dictionary<string, object>)r["models"]).Values) { Dictionary<string, object> md = mv as Dictionary<string, object>; if (md != null) md["textures"] = new List<object>(); }
                     }
                     Json200(c, r);
                 }
@@ -640,8 +736,32 @@ namespace MloCreator
                 if (!File.Exists(rf)) { Reply(c, 404, "{\"ok\":false}", "application/json"); return; }
                 Reply(c, 200, File.ReadAllText(rf, Encoding.UTF8), "application/json"); return;
             }
+            if (api == "props" || api.StartsWith("props/"))
+            {
+                // the user's own props: the list, adding .ydr / .ytd files (picked in a window), taking one out
+                Dictionary<string, object> body = method == "POST" ? Json.DeserializeObject(ReadBody(c)) as Dictionary<string, object> : null;
+                Dictionary<string, object> pr = new Dictionary<string, object>(); pr["ok"] = true;
+                try
+                {
+                    if (api == "props/add")
+                    {
+                        string[] picked = ImportHost.PickFiles("Add your own props", "Models and textures (*.ydr;*.ytd)|*.ydr;*.ytd");
+                        pr["added"] = Exporter.AddMyProps(PropsDir, picked); if (picked == null) pr["cancelled"] = true;
+                    }
+                    else if (api == "props/remove")
+                    {
+                        string n = SafeName(J.S(J.G(body, "name"), "")).ToLowerInvariant();
+                        foreach (string x in new string[] { ".ydr", ".ytd" }) { string f = Path.Combine(PropsDir, n + x); if (n.Length > 0 && File.Exists(f)) File.Delete(f); }
+                    }
+                    else if (api == "props/open") { Directory.CreateDirectory(PropsDir); Process.Start("explorer.exe", "\"" + PropsDir + "\""); }
+                    Vanilla.UseLibrary(PropsDir); pr["props"] = OwnProps(); pr["dir"] = PropsDir;
+                }
+                catch (Exception ex) { pr["ok"] = false; pr["error"] = ex.Message; }
+                Json200(c, pr); return;
+            }
             if (api == "export" && method == "POST")
             {
+                Vanilla.UseLibrary(PropsDir);
                 Dictionary<string, object> model = Json.DeserializeObject(ReadBody(c)) as Dictionary<string, object>;
                 string outDir = J.S(J.G(model, "outDir"), null);
                 if (string.IsNullOrWhiteSpace(outDir)) outDir = (string)Settings()["outDir"];
@@ -660,7 +780,7 @@ namespace MloCreator
             {
                 string dir = Path.GetFullPath(q ?? "");
                 string outRoot = Path.GetFullPath((string)Settings()["outDir"]);
-                if (Directory.Exists(dir) && dir.StartsWith(outRoot, StringComparison.OrdinalIgnoreCase)) Process.Start("explorer.exe", "\"" + dir + "\"");
+                if (Directory.Exists(dir) && (dir.StartsWith(outRoot, StringComparison.OrdinalIgnoreCase) || dir.Equals(Vanilla.ResourceDir ?? "", StringComparison.OrdinalIgnoreCase))) Process.Start("explorer.exe", "\"" + dir + "\"");
                 Reply(c, 200, "{\"ok\":true}", "application/json"); return;
             }
             Reply(c, 404, "{\"ok\":false,\"error\":\"unknown api\"}", "application/json");

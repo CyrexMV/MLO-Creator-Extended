@@ -25,42 +25,18 @@ window.MLO = window.MLO || {};
         floor: 'Paint a floor texture on part of the floor.', light: 'Hang a ceiling light.', furniture: 'Put furniture of the game in the rooms: sofas, tables, lamps, beds.',
         select: 'Select a room or opening to move, resize or edit it.', eraser: 'Remove a cutter, light, wall or opening.', figure: 'Stand a person in the room to judge sizes.'
     };
-    // ---- The route: the stages in the order you do them. A row of the list is one job; where a job has a few ways to do it (a door, a window or an archway; add a room
-    // or cut one out) the ways are one row with a switch, so the list is short. `vars` = [tool, label, key]; `steps` = the checklist steps (see steps()) that belong to a stage.
-    const ROWS = {
-        building: { name: 'Select building', vars: [['building', 'Select building', 'B']] },
-        frame: { name: 'Grid and floor', sum: 'Square the grid to a wall and set the floor.', vars: [['frame', 'Grid and floor', 'O']] },
-        level: { name: 'Raise / lower rooms', vars: [['level', 'Raise / lower rooms', 'G']] },
-        room: { name: 'Rooms', sum: 'Draw a rectangle for a room, or cut one out of a room (a column, a closet).', vars: [['room', 'Add room', '1'], ['cut', 'Cut out', '2']] },
-        part: { name: 'Partition', vars: [['part', 'Partition', '3']] },
-        fill: { name: 'Fill gaps', vars: [['fill', 'Fill gaps', 'J']] },
-        stair: { name: 'Stairs', sum: 'Stairs up to the floor above (add a floor in the Floors list).', vars: [['stair', 'Stairs', '']] },
-        opening: { name: 'Cut an opening', sum: 'Cut a door, window or archway out of the building\'s wall and fill it.', vars: [['door', 'Door', '4'], ['window', 'Window', '5'], ['arch', 'Archway', '6']] },
-        models: { name: 'Window / door models', vars: [['fit', 'Window / door models', 'I']] },
-        faces: { name: 'Delete faces', vars: [['faces', 'Delete faces', 'F']] },
-        plants: { name: 'Props and plants', sum: 'Click props, plants and small model pieces in the view and remove them.', vars: [['plants', 'Props and plants', 'Y']] },
-        parts: { name: 'Model parts', vars: [['parts', 'Model parts', 'P']] },
-        edges: { name: 'Fill holes', sum: 'Select the rim of a hole in the wall and fill it with faces.', vars: [['edges', 'Fill holes', 'K']] },
-        collision: { name: 'Collision', sum: 'The invisible part: delete the building\'s collision that blocks you, or build your own boxes.', vars: [['collision', 'Delete pieces', 'M'], ['cbox', 'Build boxes', 'N']] },
-        floor: { name: 'Floor paint', vars: [['floor', 'Floor paint', '7']] },
-        light: { name: 'Lights', sum: 'Hang a ceiling light.', vars: [['light', 'Lights', 'L']] },
-        furniture: { name: 'Furniture', sum: 'Put furniture of the game in the rooms: sofas, tables, lamps, beds.', vars: [['furniture', 'Furniture', 'Z']] },
-        walk: { name: 'Walk check', vars: [['walk', 'Walk check', 'U']] },
-        figure: { name: 'Scale figure', vars: [['figure', 'Scale figure', 'H']] }
-    };
-    const rowOf = (tool) => Object.keys(ROWS).map(k => Object.assign({ id: k }, ROWS[k])).find(r => r.vars.some(v => v[0] === tool)) || null;
-    const STAGES = [
-        { id: 'import', name: 'Import the model', note: 'Add the building\'s model files and say where it stands in the game. Done in the Import tab.', tab: 'import', rows: [], steps: ['model', 'place'] },
-        { id: 'set', name: 'Set up the building', note: 'Pick the building out of the block and put the grid on its floor. Everything else is measured from the grid.', rows: ['building', 'frame', 'level'], steps: ['building', 'grid'] },
-        { id: 'rooms', name: 'Draw the rooms', note: 'The interior is rectangles: floor, walls and ceiling. Their edges have to lie on the building\'s own walls.', rows: ['room', 'part', 'fill', 'stair'], steps: ['rooms', 'fit'] },
-        { id: 'open', name: 'Doors and windows', note: 'Cut the doors and windows out of the building\'s wall so you can walk in and see out. Nothing is cut for you: you pick the faces, or place a model with the gizmo.', rows: ['opening', 'models'], steps: ['open', 'portal'] },
-        { id: 'repair', name: 'Clean up the model', note: 'Take out what is in the way: fake doors, painted-on windows, vents, solid collision. Then close the holes that leaves.', rows: ['faces', 'parts', 'edges', 'collision'], steps: ['col', 'colclear'] },
-        { id: 'props', name: 'Props and small removals', note: 'Props, plants and small model pieces that are in the way. Click one in the view and remove it.', rows: ['plants'], steps: ['plants'] },
-        { id: 'finish', name: 'Finish the inside', note: 'Paint the floor, hang the lights and furnish the rooms. Nothing is lit unless you place a light.', rows: ['floor', 'light', 'furniture'], steps: ['lights'] },
-        { id: 'check', name: 'Check it', note: 'Walk a player-sized capsule through the interior before you export, and judge sizes with a person.', rows: ['walk', 'figure'], steps: ['walk'] },
-        { id: 'export', name: 'Export', note: 'Name the resource and export it. The Export tab says how to put it on your server.', tab: 'export', rows: [], steps: ['prefix'] }
+    // ---- The tool rail: the jobs in the order you do them, one button per group; the panel shows the group's tools as chips. `sub` says what the group is for.
+    const GROUPS = [
+        { id: 'select', name: 'Select and erase', short: 'Select', icon: 'select', sub: 'Pick a room, opening or light to change it in the inspector, or erase it.', tools: [['select', 'Select', 'V'], ['eraser', 'Eraser', 'X']] },
+        '|',
+        { id: 'set', name: 'Building and grid', short: 'Building', icon: 'building', sub: 'Pick the building out of the block and put the grid on its floor. Everything else is measured from the grid.', tools: [['building', 'Select building', 'B'], ['frame', 'Grid and floor', 'O'], ['level', 'Raise / lower', 'G']] },
+        { id: 'rooms', name: 'Rooms', short: 'Rooms', icon: 'rooms', sub: 'The interior is rectangles: floor, walls and ceiling. Their edges have to lie on the building\'s own walls.', tools: [['room', 'Add room', '1'], ['cut', 'Cut out', '2'], ['part', 'Partition', '3'], ['fill', 'Fill gaps', 'J'], ['stair', 'Stairs', '']] },
+        { id: 'open', name: 'Doors and windows', short: 'Openings', icon: 'door', sub: 'Cut the doors and windows out of the building\'s wall so you can walk in and see out, or place a model with the gizmo.', tools: [['door', 'Door', '4'], ['window', 'Window', '5'], ['arch', 'Archway', '6'], ['fit', 'Models', 'I']] },
+        { id: 'repair', name: 'Clean up the model', short: 'Clean up', icon: 'clean', sub: 'Take out what is in the way: fake doors, painted-on windows, plants, solid collision. Then close the holes that leaves.', tools: [['faces', 'Delete faces', 'F'], ['parts', 'Model parts', 'P'], ['edges', 'Fill holes', 'K'], ['plants', 'Props and plants', 'Y'], ['collision', 'Collision', 'M'], ['cbox', 'Collision boxes', 'N']] },
+        { id: 'finish', name: 'Furnish and light', short: 'Furnish', icon: 'sofa', sub: 'Furnish the rooms, hang the lights and paint the floor. Nothing is lit unless you place a light.', tools: [['furniture', 'Furniture', 'Z'], ['light', 'Lights', 'L'], ['floor', 'Floor paint', '7']] },
+        { id: 'check', name: 'Check it', short: 'Check', icon: 'check', sub: 'Walk a player-sized capsule through the interior before you export, and judge sizes with a person.', tools: [['walk', 'Walk check', 'U'], ['figure', 'Scale figure', 'H']] }
     ];
-    const stageOfTool = (tool) => { const r = rowOf(tool); return r ? (STAGES.find(s => s.rows.indexOf(r.id) >= 0) || {}).id : null; };
+    UI2.railGroups = () => GROUPS;
     // How to use each tool, in a few lines (shown open under the tool's name; HELP has the long text)
     const HOW = {
         stair: ['Add the floor above first (Floors, at the top of this panel), then come back to the floor the stairs start on.', 'Drag a rectangle on the floor: the stairs go up along its long side, towards where you let go. 3 m long for a normal floor height.', 'The floor above gets a hole with a railing where they come up. R turns them, X deletes them.'],
@@ -159,7 +135,7 @@ window.MLO = window.MLO || {};
         const I = imp(), all = (IM.files || []).filter(f => f.kind === 'model' && f.name !== I.target);
         const doorLike = all.filter(f => { const m = IM.models.find(x => x.file === f.name); if (!m) return false; const e = [0, 1, 2].map(a => m.bmax[a] - m.bmin[a]), th = Math.min(e[0], e[1]), wd = Math.max(e[0], e[1]); return th <= 0.5 && wd >= 0.5 && wd <= 3.5 && e[2] >= 1.7 && e[2] <= 3.5; });
         const cands = doorLike.length ? doorLike : all;
-        root.append(el('div', { class: 'note', style: { color: '#f0d28a' } }, 'No door model chosen yet, so door openings stay empty.'));
+        root.append(el('div', { class: 'note', style: { color: '#ffd27a' } }, 'No door model chosen yet, so door openings stay empty.'));
         if (cands.length) cands.forEach(f => root.append(el('div', { class: 'row' }, el('button', { class: 'btn sm primary', style: { whiteSpace: 'normal', textAlign: 'left' }, onclick: () => setDoor(f) }, 'Use ' + f.name + ' as the door'))));
         else root.append(el('div', { class: 'row' }, el('span', { class: 'note grow' }, 'Import a door model (.ydr) first.'), el('button', { class: 'btn sm', onclick: () => M.App.setTab('import') }, 'Import tab')));
     }
@@ -287,8 +263,8 @@ window.MLO = window.MLO || {};
         if (!(IM.files || []).length) list.append(el('div', { class: 'note' }, 'No files yet.'));
         root.append(list);
         if (IM.loading) root.append(el('div', { class: 'note' }, 'Reading the model files...'));
-        if (IM.error) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, IM.error));
-        (IM.log || []).forEach(l => root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, l)));
+        if (IM.error) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, IM.error));
+        (IM.log || []).forEach(l => root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, l)));
         const tm = IM.targetModel();
         if (tm) {
             root.append(el('div', { class: 'note' }, 'The model is ', el('b', null, tm.file), ': ' + tm.tris.toLocaleString() + ' triangles. Click another .ydr in the list to make that one the model. The other models are shown only as context.'));
@@ -315,7 +291,7 @@ window.MLO = window.MLO || {};
                         clearInterval(poll); UI2.refresh();
                     } }, 'Look up where the detail models stand');
                     root.append(el('div', { class: 'row wrap' }, pb), pst);
-                } else root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, 'Set where the model stands first.'));
+                } else root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, 'Set where the model stands first.'));
             }
         }
         };
@@ -357,7 +333,7 @@ window.MLO = window.MLO || {};
         const cstatus = el('div', { class: 'note', style: { minHeight: '16px' } });
         const cbtn = el('button', { class: 'btn sm', onclick: () => lookupCollision(cstatus, cbtn) }, 'Look up the collision in the game files');
         if (I.target) root.append(el('div', { class: 'row wrap' }, cbtn), cstatus);
-        if (colErr) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, colErr));
+        if (colErr) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, colErr));
         if (colList) {
             const all = addAllRow(colList); if (all) root.append(all);
             colList.forEach(c => root.append(el('div', { class: 'pitem', style: { padding: '4px 8px' } },
@@ -372,7 +348,7 @@ window.MLO = window.MLO || {};
         const ostatus = el('div', { class: 'note', style: { minHeight: '16px' } });
         const obtn = el('button', { class: 'btn sm', onclick: () => lookupOcclusion(ostatus, obtn) }, 'Look up occlusion files in the game');
         if (I.target) root.append(el('div', { class: 'row wrap' }, obtn), ostatus);
-        if (occErr) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, occErr));
+        if (occErr) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, occErr));
         if (occList) {
             const all = addAllRow(occList); if (all) root.append(all);
             occList.forEach(c => root.append(el('div', { class: 'pitem', style: { padding: '4px 8px' } },
@@ -400,12 +376,12 @@ window.MLO = window.MLO || {};
         const status = el('div', { class: 'note', style: { minHeight: '16px' } });
         const gbtn = el('button', { class: 'btn sm', onclick: () => gameLookup(status, gbtn) }, 'Look it up in the game files');
         if (I.target) root.append(el('div', { class: 'row wrap' }, gbtn), status);
-        if (gameError) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, gameError));
+        if (gameError) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, gameError));
         if (gameEntities && gameEntities.length) gameEntities.forEach(e => root.append(el('div', { class: 'pitem', style: { padding: '4px 8px' } }, el('span', { class: 'grow' }, 'Game: ' + e.ymap + ' ' + f2(e.x) + ', ' + f2(e.y) + ', ' + f2(e.z) + ' turned ' + f2(e.heading, 1) + '°'), el('button', { class: 'btn sm', onclick: () => useEntity(e, 'game') }, 'Use'))));
         const setE = (key, v) => Model.edit(Q => { const q = Q.import.entity || (Q.import.entity = { x: 0, y: 0, z: 0, heading: 0, source: 'manual', scale: 1 }); q[key] = r3(v); q.source = 'manual'; });
         const ev = (key) => E ? f2(E[key], key === 'heading' ? 3 : 3) : '0';
         root.append(numField('X', () => ev('x'), v => setE('x', v), '0.01'), numField('Y', () => ev('y'), v => setE('y', v), '0.01'), numField('Z', () => ev('z'), v => setE('z', v), '0.01'), numField('Heading', () => ev('heading'), v => setE('heading', v), '0.1', '°'));
-        root.append(el('div', { class: 'note', style: E ? {} : { color: '#f0a4a3' } }, E ? ('Placement set' + (E.source === 'file' ? ' from ' + E.ymap : (E.source === 'game' ? ' from the game files' : ' by hand')) + '.' + (E.tilted ? ' This model is tilted; only its turn about the vertical is used.' : '')) : 'Not set yet: Export needs it.'));
+        root.append(el('div', { class: 'note', style: E ? {} : { color: '#ffb3c2' } }, E ? ('Placement set' + (E.source === 'file' ? ' from ' + E.ymap : (E.source === 'game' ? ' from the game files' : ' by hand')) + '.' + (E.tilted ? ' This model is tilted; only its turn about the vertical is used.' : '')) : 'Not set yet: Export needs it.'));
         };
 
         // the sections, in the order you need them: the files, where the model stands, the building, the grid; then what is only needed sometimes
@@ -481,25 +457,12 @@ window.MLO = window.MLO || {};
     // ---------------- Build tab ----------------
     UI2.renderBuild = function (root) {
         const P = S.project, I = P.import, sh = P.shell, t = S.shellTool, k = kit();
-        buildingPicker(root);
-        floorPicker(root);
-        // the route: numbered stages that open like dropdowns (the one with the active tool is open), then the pointer tools and the cutaway in one row
-        const cr = rowOf(t); if (cr) (S.lastVar = S.lastVar || {})[cr.id] = t;
-        root.append(el('div', { class: 'h' }, 'Route and tools'));
-        stageList(root, t, steps());
-        root.append(el('div', { class: 'row wrap', style: { marginTop: '8px' } },
-            el('button', { class: 'btn sm' + (t === 'select' ? ' on' : ''), title: HELP.select, onclick: () => M.App.setTool('select') }, 'Select ', el('kbd', null, 'V')),
-            el('button', { class: 'btn sm' + (t === 'eraser' ? ' on' : ''), title: HELP.eraser, onclick: () => M.App.setTool('eraser') }, 'Eraser ', el('kbd', null, 'X')),
-            el('button', { class: 'btn sm' + (IM.cutOn ? ' primary' : ''), title: 'Hide the roof and the upper walls of the model so you can see the walls below (C)', onclick: () => { IT.toggleCutaway(); } }, 'Cutaway ', el('kbd', null, 'C'))));
-        root.append(el('div', { class: 'note' }, IM.cutOn ? 'Model hidden above ' + IM.cutH().toFixed(2) + ' m' : (IM.cutByTool() ? 'Roof hidden while you use this tool' : 'Cutaway is off')));
-        // the active tool: its name (with a switch between its ways when it has some), what it does, how to use it
-        root.append(el('div', { class: 'h' }, cr ? cr.name : (TOOLS.filter(x => x[0] === t)[0] || ['', 'Tool'])[1]));
-        if (cr && cr.vars.length > 1) root.append(k.seg(cr.vars.map(v => [v[0], v[1]]), t, v => M.App.setTool(v)));
+        M.Layout.toolHead(root, M.Layout.groupOf(GROUPS, t), t);
         root.append(el('div', { class: 'note what' }, SUM[t] || ''));
         if (HOW[t]) sec(root, 'how', 'How to use it', { open: true }, b => b.append(el('ul', { class: 'how' }, ...HOW[t].map(x => el('li', null, x)))));
         if (HELP[t]) sec(root, 'more', 'More about it', {}, b => b.append(el('div', { class: 'note' }, HELP[t])));
         if (t === 'floor') root.append(el('div', { class: 'row' }, el('label', null, 'Floor'), k.swatchEl(S.brush.floor, 28), el('span', { class: 'grow' }, TEX.def(S.brush.floor).name), el('button', { class: 'btn sm', onclick: () => { S.paintTarget = 'floor'; M.App.setTab('paint'); } }, 'Change')));
-        if (!IM.loaded && !IM.loading) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, 'No model imported yet. Go to the Import tab.'));
+        if (!IM.loaded && !IM.loading) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, 'No model imported yet. Go to the Import tab.'));
         if (t === 'level') {
             const raise = (d) => { if (IM.shiftLevel(d)) toast('The rooms are ' + (d > 0 ? 'raised ' : 'lowered ') + Math.abs(d).toFixed(2) + ' m.', 'ok'); M.UI.renderLeft(); };
             root.append(el('div', { class: 'row' }, el('label', null, 'Floor at'), el('span', { class: 'grow' }, f2(I.frame.z, 3) + ' m (height in the model)')));
@@ -568,8 +531,8 @@ window.MLO = window.MLO || {};
         if (t === 'collision') {
             if (!IM.colPolys && !IM._colLoading) IM.colPolysLoad().then(() => M.UI.renderLeft());
             const nreg = IM.colPolys ? IT.col.region() : 0, nsel = IT.col.count(), ndel = (I.colDeletes || []).length;
-            if (!I.entity) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, 'Set where the model stands in the game (Import tab) to see its collision.'));
-            else if (!(IM.files || []).some(f => f.kind === 'collision')) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, 'No collision file imported.'));
+            if (!I.entity) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, 'Set where the model stands in the game (Import tab) to see its collision.'));
+            else if (!(IM.files || []).some(f => f.kind === 'collision')) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, 'No collision file imported.'));
             else if (!S.showCollision) root.append(el('div', { class: 'row' }, el('button', { class: 'btn sm primary', onclick: () => { S.showCollision = true; IM.requestCollision(); M.UI.renderLeft(); M.UI.renderRight(); } }, 'Show the collision (orange lines)')));
             root.append(chk('The same place in the other collision files', () => S.colSame !== false, v => { S.colSame = v; }));
             root.append(el('div', { class: 'row wrap' }, el('span', { class: 'note grow' }, IM.colPolys ? nreg + ' piece' + (nreg === 1 ? '' : 's') + ' near the rooms, ' + nsel + ' selected' : 'Reading the collision...'),
@@ -608,7 +571,7 @@ window.MLO = window.MLO || {};
             root.append(el('div', { class: 'note' }, 'Boxes stand on the interior floor (height 0) and go to the game as part of the interior\'s own collision. Keep them in or next to the rooms. Set the floor height (Raise / lower rooms) before building boxes: they do not follow the model when it moves.'));
         }
         if (t === 'walk') {
-            const WK = M.Walk, c = WK.cfg(), res = WK.result, mark = (s) => s === 'bad' ? '✗' : '!', colr = (s) => s === 'bad' ? '#f0a4a3' : '#f0d28a';
+            const WK = M.Walk, c = WK.cfg(), res = WK.result, mark = (s) => s === 'bad' ? '✗' : '!', colr = (s) => s === 'bad' ? '#ffb3c2' : '#ffd27a';
             root.append(numField('Player width', () => f2(c.r * 2), v => { c.r = Math.min(0.6, Math.max(0.2, v / 2)); M.UI.renderLeft(); }, '0.05', 'm'), numField('Player height', () => f2(c.h), v => { c.h = Math.min(2.2, Math.max(1.0, v)); M.UI.renderLeft(); }, '0.05', 'm'),
                 numField('Step height', () => f2(c.step), v => { c.step = Math.min(0.6, Math.max(0.1, v)); M.UI.renderLeft(); }, '0.05', 'm'));
             root.append(el('div', { class: 'note' }, 'The player is a capsule that stands on the floor of the interior. Anything higher than the step height and lower than the player\'s height blocks it; what is lower is stepped over. A doorway must be at least as wide as the player.'));
@@ -630,7 +593,7 @@ window.MLO = window.MLO || {};
                     el('div', { style: { display: 'flex', flexDirection: 'column', gap: '3px' } }, el('button', { class: 'btn sm', onclick: () => WK.show(p) }, 'Show'),
                         (p.act === 'selectCollision' && (p.bbox || p.box)) ? el('button', { class: 'btn sm', title: 'Select the building\'s collision pieces that overlap this spot in the Collision tool', onclick: () => IT.colSelectIn(p.bbox || p.box) }, 'Select it') : null))));
                 const dl = res.overlay && res.overlay.doors || [];
-                if (dl.length) root.append(el('details', null, el('summary', { class: 'note', style: { cursor: 'pointer' } }, 'Doorways (' + dl.length + ')'), ...dl.map(d => el('div', { class: 'note', style: { color: d.status === 'ok' ? '#9fd9a8' : (d.status === 'narrow' ? '#f0d28a' : '#f0a4a3') } }, (d.status === 'ok' ? '✓ ' : '✗ ') + d.text))));
+                if (dl.length) root.append(el('details', null, el('summary', { class: 'note', style: { cursor: 'pointer' } }, 'Doorways (' + dl.length + ')'), ...dl.map(d => el('div', { class: 'note', style: { color: d.status === 'ok' ? '#9fd9a8' : (d.status === 'narrow' ? '#ffd27a' : '#ffb3c2') } }, (d.status === 'ok' ? '✓ ' : '✗ ') + d.text))));
                 root.append(el('div', { class: 'note' }, 'Cells are ' + Math.round(res.stats.cell * 100) + ' cm: a thing counts as solid where it touches a cell, so the check is up to ' + Math.round(res.stats.cell * 100) + ' cm stricter than the real collision. It tests the files, not the game\'s own character controller (which can slide, climb and be pushed): a doorway it passes only just may still catch in the game.'));
             }
         }
@@ -650,6 +613,12 @@ window.MLO = window.MLO || {};
             if (fills.length) root.append(el('div', { class: 'note' }, 'The new faces take their normals and texture from the wall around the hole. If a fill looks dark or is invisible from one side, Flip turns it around.'));
         }
 
+    };
+
+    // ---------------- the inspector: the selection ----------------
+    // returns false when nothing is selected
+    UI2.renderSelected = function (root) {
+        const P = S.project, I = P.import, sh = P.shell, k = kit();
         // the selected cutter
         const sel = S.cutSel ? IT.findCutter(S.cutSel) : null;
         if (sel) {
@@ -712,6 +681,7 @@ window.MLO = window.MLO || {};
             root.append(el('div', { class: 'row' }, el('button', { class: 'btn sm danger', onclick: () => { Model.edit(Q => { IM.removeCutterIn(Q, sel.id); }); S.cutSel = null; M.UI.renderLeft(); } }, sel.face ? 'Delete (the faces come back)' : 'Delete')));
         } else if (S.shellSel) {
             M.VanillaUI.renderSelected(root, k);
+            if (!root.childNodes.length) return false;
         } else if (S.opSel != null && sh.ops[S.opSel]) {
             const oi = S.opSel, o = sh.ops[oi], setR = (fn) => { Model.edit(Q => { fn(Q.shell.ops[oi].r); }); M.UI.renderLeft(); };
             root.append(el('div', { class: 'h' }, 'Selected ' + (o.op === 'cut' ? 'cut-out' : 'room')));
@@ -722,7 +692,14 @@ window.MLO = window.MLO || {};
                 numField('Depth', () => f2(o.r[3] - o.r[1]), v => setR(r => { r[3] = r3(r[1] + Math.max(0.2, v)); }), '0.05', 'm'));
             root.append(el('div', { class: 'row' }, el('button', { class: 'btn sm danger', onclick: () => IT.deleteRoom() }, 'Delete')));
         }
-
+        else return false;
+        return true;
+    };
+    // the scene: buildings, floors, openings, rooms
+    function renderScene(root) {
+        const P = S.project, I = P.import, sh = P.shell;
+        buildingPicker(root);
+        floorPicker(root);
         // lists, each one a dropdown
         sec(root, 'cutters', 'Openings (' + I.cutters.length + ')', { sum: I.deletes.length + ' faces deleted' }, (root) => {
         const cl = el('div', { class: 'plist', style: { maxHeight: '120px' } });
@@ -753,8 +730,7 @@ window.MLO = window.MLO || {};
         root.append(list);
         if (IM.loaded) { const ab = el('button', { class: 'btn sm' + (sh.ops.length ? '' : ' primary'), title: 'Make the rooms from the inside of the building\'s walls', onclick: () => autoRooms(ab) }, 'Create the rooms automatically'); root.append(el('div', { class: 'row wrap' }, ab)); }
         });
-        sec(root, 'camera', 'Camera and keys', {}, b => b.append(el('div', { class: 'note' }, 'Like Blender: middle-drag orbits (Shift pans, Ctrl zooms), right-drag also orbits · wheel zoom · keypad 1 / 3 / 7 front / right / top (Ctrl: opposite), 4 6 8 2 step the orbit, Home frames everything · WASD move · Q/E turn · T top-down. Right-click or Esc cancels a drag.')));
-    };
+    }
 
     // ---------------- the frame of a window or door: built by the program, the model's own, or none ----------------
     const frameMode = (c) => c.vframe ? 'vanilla' : (c.frame === false ? 'none' : 'built');
@@ -797,8 +773,18 @@ window.MLO = window.MLO || {};
 
     // ---------------- right panel ----------------
     UI2.renderRight = function (root) {
+        const selKey = S.cutSel ? 'c' + S.cutSel : (S.shellSel ? 's' + S.shellSel.kind + S.shellSel.id : (S.opSel != null && S.project.shell.ops[S.opSel] ? 'o' + S.opSel : null));
+        M.Layout.watch(selKey);
+        M.Layout.inspector(root, [
+            { id: 'sel', label: 'Selected', badge: selKey ? '1' : null, render: (b) => { if (!UI2.renderSelected(b)) M.Layout.empty(b, 'Nothing selected. Click a room, an opening or a wall with Select (V), or pick one in Scene.'); } },
+            { id: 'scene', label: 'Scene', render: renderScene },
+            { id: 'project', label: 'Project', render: renderProject }
+        ]);
+    };
+    // the project: how it is shown, the collision, the walls and the numbers
+    function renderProject(root) {
         const P = S.project, k = kit();
-        sec(root, 'v.view', 'View', { panel: 'right', open: true }, (root) => {
+        sec(root, 'v.view', 'View options', { panel: 'right' }, (root) => {
         root.append(el('div', { class: 'row' }, el('label', null, 'The model'), k.seg([['off', 'Off'], ['ghost', 'Ghost'], ['solid', 'Solid']], S.refMode, v => { S.refMode = v; IM.rebuild(); M.UI.renderRight(); })));
         if (IM.selComps) {
             root.append(el('div', { class: 'row' }, el('label', null, 'Other buildings'), k.seg([['hide', 'Hidden'], ['ghost', 'Ghost'], ['show', 'Shown']], IM.isoMode(), v => { Model.edit(Q => { Q.import.iso = v; }); M.UI.renderRight(); })));
@@ -849,6 +835,33 @@ window.MLO = window.MLO || {};
             'Cutters', el('b', null, I.cutters.length), 'Deleted faces', el('b', null, I.deletes.length), 'Lights', el('b', null, (P.shell.lights || []).length)));
         });
         if (IM.busy) root.append(el('div', { class: 'note' }, 'Cutting...'));
+        sec(root, 'camera', 'Camera and keys', { panel: 'right' }, b => b.append(el('div', { class: 'note' }, 'Like Blender: middle-drag orbits (Shift pans, Ctrl zooms), right-drag also orbits · wheel zoom · keypad 1 / 3 / 7 front / right / top (Ctrl: opposite), 4 6 8 2 step the orbit, Home frames everything · WASD move · Q/E turn · T top-down. Right-click or Esc cancels a drag.')));
+    }
+    // the bar over the 3D view: what is shown, the cutaway, the camera
+    UI2.viewItems = function () {
+        const R = M.App.renderer;
+        return [{ seg: [['off', 'Off'], ['ghost', 'Ghost'], ['solid', 'Solid']], cur: S.refMode, label: 'Model', title: 'How the imported model is drawn', pick: v => { S.refMode = v; IM.rebuild(); M.UI.renderRight(); } }, '|',
+            { icon: 'cut', label: 'Cutaway', title: 'Hide the roof and the upper walls of the model (C)', on: IM.cutOn, act: () => IT.toggleCutaway() },
+            { icon: 'grid', label: 'Grid', on: S.view.grid, act: () => { S.view.grid = !S.view.grid; R.showGrid = S.view.grid; M.UI.renderRight(); } },
+            { icon: 'shield', label: 'Collision', title: 'The game collision of the model (orange)', on: S.showCollision, act: () => { S.showCollision = !S.showCollision; IM.requestCollision(); M.UI.renderRight(); } }, '|',
+            { icon: 'top', label: 'Top-down', title: 'Top-down (T)', act: () => M.App.toggleTopDown() },
+            { icon: 'frame', label: 'Frame', title: (IM.isolating() ? 'Frame the building' : 'Frame the model') + ' (Home)', act: () => M.App.frameAll() },
+            { icon: 'more', title: 'More view options', act: () => { (S.secOpen = S.secOpen || {})['v.view'] = true; M.Layout.openTab('project'); } }];
+    };
+    // the status bar: the floor you work on and what is in it
+    UI2.statusItems = function () {
+        const P = S.project, I = P.import; if (!I || !I.target) return null;
+        const Lv = Model.levelsOf({ import: I, shell: P.shell, settings: P.settings }), sh = P.shell, out = [];
+        const go = (v) => { const to = Lv.find(l => String(l.id) === v); if (to && Model.switchLevel(to.id)) { M.App.remesh(); M.UI.renderAll(); } };
+        out.push(el('label', { class: 'sfl', title: 'The floor you work on (PageUp / PageDown)' }, M.Layout.icon('layers'), el('select', { onchange: (e) => go(e.target.value) }, ...Lv.slice().reverse().map(l => el('option', { value: String(l.id), selected: l.active ? true : null }, l.name)))));
+        const rooms = sh.ops.filter(o => o.op === 'add').length, lights = (sh.lights || []).length, pl = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+        out.push(el('span', { class: 'sc' }, [pl(rooms, 'room'), pl(I.cutters.length + (I.fits || []).length, 'opening'), pl(lights, 'light')].join(' · ')));
+        return out;
+    };
+    // the workflow steps at the top, with a tick when the step's must-dos are done
+    UI2.stepTabs = function () {
+        const P = S.project, I = P.import, sh = P.shell;
+        return [['import', 'Import', !!(IM.targetModel() && I.entity)], ['build', 'Build', sh.ops.some(o => o.op === 'add') && (I.cutters.length > 0 || (I.fits || []).length > 0)], ['paint', 'Paint'], ['export', 'Export']];
     };
 
     // ---------------- the checklist ----------------
@@ -878,7 +891,7 @@ window.MLO = window.MLO || {};
     }
     const goStep = (s) => { if (s.go.tab) M.App.setTab(s.go.tab); else M.App.setTool(s.go.tool); };
     function stepRow(s) {
-        const mark = s.done ? '✓' : (s.sev === 'must' ? '✗' : (s.sev === 'should' ? '!' : '○')), col = s.done ? '#9fd9a8' : (s.sev === 'must' ? '#f0a4a3' : (s.sev === 'should' ? '#f0d28a' : '#8fa0bd'));
+        const mark = s.done ? '✓' : (s.sev === 'must' ? '✗' : (s.sev === 'should' ? '!' : '○')), col = s.done ? '#9fd9a8' : (s.sev === 'must' ? '#ffb3c2' : (s.sev === 'should' ? '#ffd27a' : '#8fa0bd'));
         return el('div', { class: 'row', style: { alignItems: 'flex-start', gap: '6px' } }, el('span', { style: { color: col, width: '12px', flex: 'none' } }, mark),
             el('div', { class: 'grow' }, el('div', { style: { color: col } }, s.title), s.done ? null : el('div', { class: 'note' }, s.why)), s.done ? null : el('button', { class: 'btn sm', onclick: () => goStep(s) }, 'Go'));
     }
@@ -897,36 +910,6 @@ window.MLO = window.MLO || {};
         root.append(card);
         sec(root, 'allsteps', 'All steps', { sum: list.filter(s => !s.done).length ? list.filter(s => !s.done).length + ' open' : 'all done' }, b => list.forEach(s => b.append(stepRow(s))));
     };
-    // how a stage of the route stands: all its steps done, how many are still open, or only optional ones left (null: the stage has no step)
-    function stageStatus(st, byId) {
-        const ss = st.steps.map(id => byId[id]).filter(Boolean); if (!ss.length) return null;
-        const open = ss.filter(s => !s.done), need = open.filter(s => s.sev !== 'opt');
-        if (!open.length) return { txt: '✓', col: '#9fd9a8', open };
-        if (need.length) return { txt: need.length + ' to do', col: need.some(s => s.sev === 'must') ? '#f0a4a3' : '#f0d28a', open };
-        return { txt: 'optional', col: '#8fa0bd', open };
-    }
-    // The route as a list of numbered stages that open and close like dropdowns: the one with the active tool is open, with what it is for, what is still open in it and its tools.
-    function stageList(root, t, list) {
-        const byId = {}; list.forEach(s => { byId[s.id] = s; });
-        const act = stageOfTool(t), pick = S.stagePick && S.stagePick.tool === t ? S.stagePick.stage : act;
-        STAGES.forEach((st, i) => {
-            const stat = stageStatus(st, byId), isOpen = pick === st.id && !st.tab;
-            root.append(el('button', { class: 'stage' + (isOpen ? ' open' : '') + (act === st.id ? ' has' : ''), title: st.note, onclick: () => { if (st.tab) { M.App.setTab(st.tab); return; } S.stagePick = { stage: isOpen ? null : st.id, tool: t }; M.UI.renderLeft(); } },
-                el('span', { class: 'sn' }, String(i + 1)), el('span', { class: 'st' }, st.name), stat ? el('span', { class: 'ss', style: { color: stat.col } }, stat.txt) : null, el('span', { class: 'arr' }, st.tab ? '›' : (isOpen ? '▾' : '▸'))));
-            if (!isOpen) return;
-            const body = el('div', { class: 'secbody' });
-            body.append(el('div', { class: 'note', style: { margin: '2px 0 6px' } }, st.note));
-            if (stat) stat.open.forEach(s => body.append(stepRow(s)));
-            const rows = el('div', { class: 'toollist' });
-            st.rows.forEach(id => {
-                const r = ROWS[id], on = r.vars.some(v => v[0] === t), keys = r.vars.map(v => v[2]).join(' / ');
-                rows.append(el('button', { class: 'tool' + (on ? ' on' : ''), title: r.vars.map(v => v[1] + ' (' + v[2] + ')').join(', '), onclick: () => M.App.setTool(on ? t : ((S.lastVar || {})[id] || r.vars[0][0])) },
-                    el('span', { class: 'tn' }, el('span', { class: 'nm' }, r.name), el('span', { class: 'sub' }, r.sum || SUM[r.vars[0][0]] || '')), el('kbd', null, keys)));
-            });
-            body.append(rows); root.append(body);
-        });
-    }
-
     // ---------------- export ----------------
     // where a building's grid stands in the world: the model's placement plus the building's own grid (frame)
     function placement(P, frame) {
@@ -955,6 +938,7 @@ window.MLO = window.MLO || {};
         if (I.doorModel) root.append(el('div', { class: 'note' }, ndoor + ' door(s) placed with ' + I.doorModel.name + (I.doorModel.include ? ' (model included).' : ' (referenced by name: the game must have this model).')));
         sec(root, 'e.place', 'Where it goes', { open: true }, (b) => { ex.place = el('div', { class: 'kv' }); b.append(ex.place); UI2.updatePlace(); });
         sec(root, 'e.opt', 'Options', { sum: X.outDir ? 'own folder' : 'default folder' }, (b) => {
+            b.append(M.UI.ambientRow(X));
             b.append(el('div', { class: 'row' }, el('label', null, 'Output folder'), el('input', { type: 'text', class: 'grow', value: X.outDir || '', placeholder: 'default: the output folder next to the program', onchange: (e) => { X.outDir = e.target.value.trim(); Model.touch(); } })));
             b.append(el('div', { class: 'note' }, 'The cut model is written with its original file name, so the copy in your resource replaces the game\'s one while the resource runs. Only one resource can replace a given file, so all the buildings of the model go into one resource.'));
         });
@@ -993,6 +977,7 @@ window.MLO = window.MLO || {};
         const log = (html, cls) => { ex.log.style.display = 'block'; ex.log.append(el('div', { class: cls || '' }, html)); ex.log.scrollTop = 1e9; };
         ex.log.innerHTML = ''; ex.after.style.display = 'none';
         if (!IM.targetModel()) { toast('Import the model first.', 'warn'); return; }
+        if (M.Furniture && M.Furniture.whenLoaded) await M.Furniture.whenLoaded();          // (the collision of furniture that carries none is made from its model)
         if (!placement(P)) { toast('Set where the model stands in the game first (Import tab).', 'warn'); return; }
         if (!P.prefix) { toast('Give the project a prefix first.', 'warn'); return; }
         const all = Model.bldAll(P), todo = all.filter(b => hasRooms(b.d));
@@ -1026,8 +1011,8 @@ window.MLO = window.MLO || {};
                 // doors placed with the door model (positions are in the grid's coordinates, which is the interior's own frame)
                 const doors = []; if (dmod) BI.cutters.filter(k => k.leaf).forEach(k => IM.doorTransforms(k).forEach(t => doors.push({ x: t.x, y: t.y, z: t.z, heading: t.yaw * 180 / Math.PI, sxy: t.sxy, sz: t.sz })));        // two leaves for double doors
                 if (doors.length) log(tag + 'Doors placed with ' + dmod.name + ': ' + doors.length);
-                const m = Mesher.toExport(BP, built, { light: {}, model: { resource, prefix: prefixOf(BP, rec), label: many ? b.name : (X.label || BP.name), timecycle: 'hash_E83C53FC', placement: { x: pl.x, y: pl.y, heading: pl.heading, z: pl.z }, entranceNote: 'test spot inside the interior: ' + tp, outDir: X.outDir || undefined,
-                    doors, doorModel: doors.length ? { name: dmod.name, include: !!dmod.include, project: BP.name } : undefined, fitted: M.FitModels.exportSpec(BP), furniture: M.Furniture.exportSpec(BP) } });
+                const m = Mesher.toExport(BP, built, { light: {}, model: { resource, prefix: prefixOf(BP, rec), label: many ? b.name : (X.label || BP.name), timecycle: 'hash_E83C53FC', ambient: X.ambient || 'normal', propLights: P.propLights || {}, placement: { x: pl.x, y: pl.y, heading: pl.heading, z: pl.z }, entranceNote: 'test spot inside the interior: ' + tp, outDir: X.outDir || undefined,
+                    doors, doorModel: doors.length ? { name: dmod.name, include: !!dmod.include, project: BP.name } : undefined, fitted: M.FitModels.exportSpec(BP), gameDoors: M.FitModels.gameDoors(BP), furniture: M.Furniture.exportSpec(BP) } });
                 models.push(m); tps.push({ name: b.name, tp }); occSets.push({ rects: Shell.regionRects(BP.shell), place: { x: pl.x, y: pl.y, heading: pl.heading } });
             }));
             if (!models.length) { log('Nothing to export.', 'bad'); ex.btn.disabled = false; ex.btn.textContent = 'Export resource'; return; }
@@ -1054,8 +1039,8 @@ window.MLO = window.MLO || {};
     }
 
     UI2.renderLeft = function (root) {
-        if (S.tab === 'import' || S.tab === 'build') UI2.renderChecklist(root, true);
         if (S.tab === 'import') UI2.renderImport(root); else if (S.tab === 'build') UI2.renderBuild(root); else if (S.tab === 'paint') M.VanillaUI.renderPaint(root); else UI2.renderExport(root);
+        if (S.tab === 'import' || S.tab === 'build') UI2.renderChecklist(root, true);
     };
     UI2.refresh = function () { M.UI.renderLeft(); M.UI.renderRight(); };
     UI2.updateInfo = function () { if (S.tab === 'export') UI2.updatePlace(); };

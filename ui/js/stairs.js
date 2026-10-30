@@ -13,6 +13,7 @@ window.MLO = window.MLO || {};
     const list = () => (S.project.shell && S.project.shell.stairs) || [];
     const byId = (id) => list().find(s => s.id === id) || null;
     const DIRS = [['+y', 'North'], ['+x', 'East'], ['-y', 'South'], ['-x', 'West']];
+    const SHAPES = [['straight', 'Straight'], ['l', 'L (landing)'], ['u', 'U (turns back)'], ['spiral', 'Spiral']];
     const ctx = () => M.Shell.levelCtx(S.project);
     // where the rise goes: the floor above, else the ceiling
     ST.rise = () => ctx().rise || S.project.settings.ceilH || 2.45;
@@ -42,7 +43,7 @@ window.MLO = window.MLO || {};
             if (r[2] - r[0] < 0.6 || r[3] - r[1] < 0.6) { toast('Drag a rectangle for the stairs: at least 60 cm wide, the long side is the way up (towards where you let go).', 'warn'); return; }
             const s = { id: randId(), r: r.map(r3), dir: dirOf(d.a, d.b) };
             Model.edit(P => { (P.shell.stairs = P.shell.stairs || []).push(s); }); ST.sel = s.id; M.UI.renderLeft();
-            const run = s.dir[1] === 'x' ? r[2] - r[0] : r[3] - r[1], rise = ST.rise(), n = Math.max(1, Math.round(rise / 0.18));
+            const run = s.dir[1] === 'x' ? r[2] - r[0] : r[3] - r[1], rise = ST.rise(), n = Math.max(1, Math.round(rise / 0.18));          // (a new stair is straight: its shape is set in the panel)
             toast('Stairs: ' + n + ' steps of ' + (rise / n * 100).toFixed(0) + ' cm up ' + rise.toFixed(2) + ' m over ' + run.toFixed(2) + ' m' + (ctx().rise ? ' to the floor above.' : ' (there is no floor above yet: they go up to the ceiling).') + (run / n < 0.22 ? ' The steps are steep: make the stairs longer.' : ''), run / n < 0.22 ? 'warn' : 'ok');
         },
         draw(R) {
@@ -72,15 +73,26 @@ window.MLO = window.MLO || {};
         root.append(el('div', { class: 'note' }, c.rise ? 'The stairs go up ' + rise.toFixed(2) + ' m to the floor above. That floor gets a hole where they come up, with a railing round it; the ceiling here is open over them.' : 'There is no floor above this one yet: stairs go up to the ceiling. Add a floor in the Floors list first.'));
         const s = ST.sel ? byId(ST.sel) : null;
         if (s) {
-            const r = s.r, run = s.dir[1] === 'x' ? r[2] - r[0] : r[3] - r[1], n = Math.max(1, Math.round(rise / 0.18));
+            const r = s.r, run = s.dir[1] === 'x' ? r[2] - r[0] : r[3] - r[1], n = Math.max(1, Math.round(rise / Math.min(0.22, Math.max(0.15, s.step || 0.18)))), kind = s.kind || 'straight';
             root.append(el('div', { class: 'h' }, 'Selected stairs'));
             root.append(el('div', { class: 'row' }, el('label', null, 'Up towards'), k.seg(DIRS, s.dir, v => ST.edit(s.id, q => { q.dir = v; }))));
+            // shape and size (Shell.build: buildStair)
+            root.append(el('div', { class: 'row wrap' }, el('label', null, 'Shape'), k.seg(SHAPES, kind, v => ST.edit(s.id, q => { q.kind = v; if (v === 'spiral') { const sz = Math.max(q.r[2] - q.r[0], q.r[3] - q.r[1]); q.r = [q.r[0], q.r[1], r3(q.r[0] + sz), r3(q.r[1] + sz)]; } }))));
+            if (kind !== 'straight') root.append(el('div', { class: 'row' }, el('label', null, 'Turns'), k.seg([['l', 'Left'], ['r', 'Right']], s.turn === 'r' ? 'r' : 'l', v => ST.edit(s.id, q => { q.turn = v; }))));
+            const numIn = (label, val, step, set, unit) => el('div', { class: 'row' }, el('label', null, label), el('input', { type: 'number', class: 'grow', step, value: val, onchange: (ev) => { const v = parseFloat(ev.target.value); if (!isNaN(v)) set(v); } }), el('span', { class: 'note' }, unit));
+            const sizeA = r[2] - r[0], sizeB = r[3] - r[1];
+            root.append(numIn('Width x', f2(sizeA), 0.05, v => ST.edit(s.id, q => { q.r[2] = r3(q.r[0] + Math.max(0.6, v)); if (kind === 'spiral') q.r[3] = r3(q.r[1] + Math.max(0.6, v)); }), 'm'),
+                numIn('Depth y', f2(sizeB), 0.05, v => ST.edit(s.id, q => { q.r[3] = r3(q.r[1] + Math.max(0.6, v)); if (kind === 'spiral') q.r[2] = r3(q.r[0] + Math.max(0.6, v)); }), 'm'),
+                numIn('Step height', Math.round((s.step || 0.18) * 100), 1, v => ST.edit(s.id, q => { q.step = Math.min(0.22, Math.max(0.15, v / 100)); }), 'cm (15 to 22)'));
+            if (kind === 'l' || kind === 'u') root.append(numIn('Flight width', f2(s.w || (kind === 'u' ? Math.min(sizeA, sizeB) / 2 : 1.0)), 0.05, v => ST.edit(s.id, q => { q.w = Math.max(0.5, v); }), 'm'));
+            if (kind !== 'spiral') root.append(el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: s.open ? true : null, onchange: (ev) => ST.edit(s.id, q => { q.open = ev.target.checked; }) }), 'Open steps (treads on stringers)'));
+            root.append(el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: s.rail ? true : null, onchange: (ev) => ST.edit(s.id, q => { q.rail = ev.target.checked; }) }), 'Handrails'));
             root.append(el('div', { class: 'note' }, n + ' steps, ' + (rise / n * 100).toFixed(0) + ' cm high and ' + (run / n * 100).toFixed(0) + ' cm deep' + (run / n < 0.22 ? ': steep, make them longer' : '') + '. ' + f2(r[2] - r[0]) + ' x ' + f2(r[3] - r[1]) + ' m.'));
             root.append(el('div', { class: 'row wrap' }, el('button', { class: 'btn sm', title: 'R', onclick: () => { const i = DIRS.findIndex(d => d[0] === s.dir); ST.edit(s.id, q => { q.dir = DIRS[(i + 1) % 4][0]; }); } }, 'Turn'), el('button', { class: 'btn sm danger', title: 'X', onclick: () => ST.remove(s.id) }, 'Delete')));
         }
         root.append(el('div', { class: 'h' }, 'On this floor (' + list().length + ')'));
         list().forEach(q => root.append(el('div', { class: 'pitem', style: { padding: '3px 8px', background: ST.sel === q.id ? 'var(--accent-soft)' : '' }, onclick: () => ST.select(q.id) },
-            el('span', { class: 'grow' }, 'Stairs ' + DIRS.find(d => d[0] === q.dir)[1].toLowerCase()), el('span', { class: 'note' }, f2(q.r[2] - q.r[0]) + ' x ' + f2(q.r[3] - q.r[1])),
+            el('span', { class: 'grow' }, (SHAPES.find(x => x[0] === (q.kind || 'straight')) || SHAPES[0])[1] + ' stairs ' + DIRS.find(d => d[0] === q.dir)[1].toLowerCase()), el('span', { class: 'note' }, f2(q.r[2] - q.r[0]) + ' x ' + f2(q.r[3] - q.r[1])),
             el('button', { class: 'btn sm danger', onclick: (e) => { e.stopPropagation(); ST.remove(q.id); } }, 'x'))));
     };
 })(window.MLO);

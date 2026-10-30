@@ -27,9 +27,34 @@ window.MLO = window.MLO || {};
 
     // ---------- the library ----------
     FM.reset = function () { FM.lib = { files: [], byId: new Map(), busy: false, error: '', ver: (FM.lib.ver || 0) + 1, loaded: false }; thumbs = new Map(); bakeCache.clear(); FM.sel = null; FM.chosen = null; drag = null; };
-    FM.kindOf = function (file) { const rec = FM.lib.files.find(x => x.file === file); return ((imp().glbKinds || {})[file]) || (rec ? rec.guess : 'window'); };
+    FM.kindOf = function (file) { if (file && file.startsWith('gta:')) return file.slice(4); const rec = FM.lib.files.find(x => x.file === file); return ((imp().glbKinds || {})[file]) || (rec ? rec.guess : 'window'); };
     FM.setKind = function (file, kind) { Model.edit(P => { P.import.glbKinds = P.import.glbKinds || {}; P.import.glbKinds[file] = kind; }); FM.loadLib(file); };
-    FM.model = function (id) { return FM.lib.byId.get(id) || null; };
+    FM.model = function (id) { return id && id.startsWith('gta:') ? gameModel(id.slice(4)) : (FM.lib.byId.get(id) || null); };
+    // A model of the game (a door, a gate, a garage door, a window from the game's browser below) as the tool sees its .glb models: its parts with the
+    // game's textures (the furniture's), in its own size (the game does not scale a door). Its placement: f "gta:door" or "gta:window", m "gta:<name>", g <name>.
+    const gameAdapt = new Map();
+    function gameModel(n) {
+        const fm = M.Furniture.model(n); if (!fm) { M.Furniture.ensure([n]); return null; } if (fm.error || !fm.geoms) return null;
+        let a = gameAdapt.get(n); if (a && a.src === fm) return a;
+        const mats = [], mi = new Map(), geoms = fm.geoms.map(g => {
+            const key = g.tex || ''; if (!mi.has(key)) { mi.set(key, mats.length); mats.push({ name: key, key, color: [0.72, 0.70, 0.66, 1], tex: key ? 'fu:' + key : '', glass: /glass/.test(key) }); }
+            return { mat: mi.get(key), pos: g.pos, nrm: g.nrm, uv: g.uv, idx: g.idx };
+        });
+        const kind = (GG.kinds[n] || 'door') === 'window' ? 'window' : 'door';
+        a = { src: fm, gta: true, id: 'gta:' + n, f: 'gta:' + kind, name: n, min: fm.bmin, max: fm.bmax, size: [fm.bmax[0] - fm.bmin[0], fm.bmax[1] - fm.bmin[1], fm.bmax[2] - fm.bmin[2]],
+            tris: geoms.reduce((t, g) => t + g.idx.length / 3, 0), core: null, latch: 0, rot: SETUP.ident, auto: false, inner: null, mats, geoms };
+        gameAdapt.set(n, a); return a;
+    }
+    // the game's doors, gates, garage doors and windows placed in openings, for the export: the model's origin where its box stands (in the grid's frame)
+    FM.gameDoors = function (project) {
+        return ((project.import && project.import.fits) || []).filter(f => f.g).map(f => {
+            const m = FM.model(f.m), cs = Math.cos(f.yaw), sn = Math.sin(f.yaw); if (!m) return null;
+            const uc = (m.min[0] + m.max[0]) / 2, nc = (m.min[1] + m.max[1]) / 2;
+            // (sized: the export scales a copy of the model by sx, sy, sz about its origin)
+            const sx = f.w / m.size[0], sy = f.d / m.size[1], sz = f.h / m.size[2], u = uc * sx, n = nc * sy;
+            return { name: f.g, x: r3(f.cx - u * cs + n * sn), y: r3(f.cy - u * sn - n * cs), z: r3(f.zb - m.min[2] * sz), heading: r3(f.yaw * 180 / Math.PI), mode: f.kind === 'door' ? (f.mode || 'swing') : 'swing', h: r3(f.h), sx: +sx.toFixed(4), sy: +sy.toFixed(4), sz: +sz.toFixed(4) };
+        }).filter(Boolean);
+    };
     FM.models = function () { const out = []; FM.lib.files.forEach(f => f.models.forEach(m => out.push(m))); return out; };
     // `only`: the name of one file to read again (its kind, or the turn of one of its models, changed); the others stay as they are
     FM.loadLib = async function (only) {
@@ -295,6 +320,7 @@ window.MLO = window.MLO || {};
     FM.exportSpec = function (project) {
         const list = (project.import && project.import.fits) || []; if (!list.length) return undefined;
         const items = []; list.forEach(f => {
+            if (f.g) return;
             const base = { f: f.f, m: f.m, kind: f.kind, zb: f.zb, yaw: f.yaw, d: f.d, h: f.h, rot: (FM.model(f.m) || {}).rot || null }, U = [Math.cos(f.yaw), Math.sin(f.yaw)];
             // A door gets the clear opening it swings in (where the cut you made in the building and the hole in the interior's own wall overlap): [from, to] along the
             // wall from the leaf's middle and [from, to] in height from its bottom. The export keeps the leaf's collision inside it: a leaf that reaches into the wall is
@@ -427,7 +453,7 @@ window.MLO = window.MLO || {};
     // ---------- placing ----------
     function snapYaw(yaw) { const deg = yaw * 180 / Math.PI, q = ((deg % 90) + 90) % 90; return Math.min(q, 90 - q) < 1.5 ? Math.round(yaw / (Math.PI / 2)) * (Math.PI / 2) : yaw; }
     // how a new door opens, from its name: a sliding door slides (not the patio door, a whole unit of its own), a swing door swings both ways by itself
-    const modeOf = (m) => { const n = (m.name + ' ' + m.f).toLowerCase(); return /garage/.test(n) ? 'lift' : (/slid/.test(n) && !/patio/.test(n) ? 'slide' : (/swing/.test(n) ? 'auto' : 'swing')); };
+    const modeOf = (m) => { const n = (m.name + ' ' + m.f).toLowerCase(); return /roll|shutter|roller|rolltor|rollladen/.test(n) ? 'roll' : (/garage|sectional/.test(n) ? 'lift' : (/slid/.test(n) && !/patio/.test(n) ? 'slide' : (/swing/.test(n) ? 'auto' : 'swing'))); };
     // which side of a door the rooms are on: +1 when they are on its front (+n), -1 behind it (a garage door folds up into the room); behind when it cannot tell
     function inwardOf(project, f) {
         const sh = project && project.shell; if (!sh || !sh.ops || !sh.ops.length) return -1;
@@ -455,7 +481,8 @@ window.MLO = window.MLO || {};
         const m = FM.chosen ? FM.model(FM.chosen) : null;
         if (!m) { toast('Choose a model in the list first, then click a wall.', 'warn'); return; }
         const nf = newFit(m, hover.surf); if (!nf) { toast('Click a wall of the model or of your rooms.', 'warn'); return; }
-        nf.id = randId(); const { fitted, framed, wide } = fitNew(nf);
+        nf.id = randId(); if (m.gta) { nf.g = m.name; delete nf.double; }
+        const { fitted, framed, wide } = m.gta ? {} : fitNew(nf);
         Model.edit(P => { (P.import.fits = P.import.fits || []).push(nf); }); FM.sel = nf.id; M.UI.renderLeft();
         const what = FM.isWinFrame(nf) ? 'window' : 'door', inside = nf.kind === 'frame' ? fits().filter(d => d.kind === what && findFrame(d, [nf])).length : 0;
         if (inside) { toast('Frame placed. ' + inside + ' ' + what + (inside === 1 ? ' stands' : 's stand') + ' in it: "Fit the ' + what + 's in it" in the panel sizes ' + (inside === 1 ? 'it' : 'them') + ' to the frame\'s opening.', 'ok'); return; }
@@ -484,6 +511,7 @@ window.MLO = window.MLO || {};
         drag = { type: 'move', mode: wall ? 'wall' : 'floor', id: it.id, g0: copyGeo(it), p0, px: [e.clientX, e.clientY], moved: false, h: null };
     }
     function startHandle(it, h, e, ray) {
+
         const { U, N, Z, c } = axes(it); drag = { type: h.type, h, id: it.id, g0: copyGeo(it), px: [e.clientX, e.clientY], moved: false };
         if (h.type === 'arrow') { drag.A = h.dir; drag.P0 = c; drag.t0 = lineParam(ray, c, h.dir); if (drag.t0 == null) { drag = null; return; } }
         else if (h.type === 'face') { drag.A = h.axis === 'u' ? U : (h.axis === 'n' ? N : Z); drag.P0 = h.p; drag.t0 = lineParam(ray, h.p, drag.A); if (drag.t0 == null) { drag = null; return; } }
@@ -530,7 +558,10 @@ window.MLO = window.MLO || {};
     FM.cancel = function () { if (!drag) return false; FM.up(null, false); return true; };
 
     // ---------- editing ----------
-    FM.set = function (patch, id) { id = id || FM.sel; if (!id) return; Model.edit(P => { const q = (P.import.fits || []).find(f => f.id === id); if (q) Object.assign(q, patch); }); M.UI.renderLeft(); };
+    FM.set = function (patch, id) {
+        id = id || FM.sel; if (!id) return; const q0 = fits().find(f => f.id === id);
+        if (q0 && q0.g) delete patch.double;          // (a model of the game is one leaf)
+        Model.edit(P => { const q = (P.import.fits || []).find(f => f.id === id); if (q) Object.assign(q, patch); }); M.UI.renderLeft(); };
     // a door becomes a double door (its width is the whole doorway: the leaves keep the size the door had) or a single one again (one leaf of half the width)
     FM.setDouble = function (on) {
         const it = selFit(); if (!it || it.kind !== 'door' || !!it.double === !!on) return;
@@ -549,7 +580,12 @@ window.MLO = window.MLO || {};
         const { U } = axes(it), cp = Object.assign({}, it, { id: randId(), cx: r3(it.cx + U[0] * (it.w + 0.1)), cy: r3(it.cy + U[1] * (it.w + 0.1)) });
         Model.edit(P => { P.import.fits.push(cp); }); FM.sel = cp.id; M.UI.renderLeft(); toast('Copied next to it.', 'ok'); return true;
     };
-    FM.select = function (id) { FM.sel = id; M.UI.renderLeft(); };
+    FM.select = function (id) {
+        FM.sel = id;
+        const it = byId(id), m = it && FM.model(it.m);
+        if (it && m && it.kind === 'door' && !it.mode) FM.set({ mode: modeOf(m) }, id);
+        else M.UI.renderLeft();
+    };
     FM.choose = function (id) { FM.chosen = FM.chosen === id ? null : id; M.UI.renderLeft(); };
     FM.key = function (k) {
         if (k === 'Escape') { if (drag) { FM.cancel(); return true; } if (FM.sel) { FM.sel = null; M.UI.renderLeft(); return true; } if (FM.chosen) { FM.chosen = null; M.UI.renderLeft(); return true; } return false; }
@@ -569,6 +605,63 @@ window.MLO = window.MLO || {};
     // ---------- the panel ----------
     const num = (label, get, set, step, unit) => el('div', { class: 'row' }, el('label', null, label), el('input', { type: 'number', class: 'grow', step: step || '0.01', value: get(), onchange: (e) => { const v = parseFloat(e.target.value); if (!isNaN(v)) set(v); } }), unit ? el('span', { class: 'note' }, unit) : null);
     const chk = (label, get, set) => el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: get() ? true : null, onchange: (e) => set(e.target.checked) }), label);
+    // ---------- the game's own doors, windows, garage doors and gates (buildings/doors by kind): a picture of each from its shape, placed as an object of the
+    // interior with the furniture tool (a door of the game swings when pushed, like in the game's own interiors) ----------
+    const GG = FM.game = { cat: 'door', q: '', names: null, busy: false, shown: 30, models: new Map(), loading: false, kinds: {} };
+    const GCATS = [['door', 'Doors'], ['window', 'Windows'], ['garage', 'Garage'], ['gate', 'Gates']];
+    async function gameList() {
+        GG.busy = true; M.UI.renderLeft();
+        try { const r = await Model.api('buildings/doors', 'POST', { q: GG.q, kind: GG.cat, gta: '' }); if (r.ok === false) throw new Error(r.error); GG.names = r.names || []; GG.shown = 30; }
+        catch (e) { GG.names = []; toast(e.message, 'err'); }
+        GG.busy = false; M.UI.renderLeft(); gamePictures();
+    }
+    const asThumb = (n, d) => ({ id: 'gta:' + n, name: n, min: d.bmin, max: d.bmax, size: [d.bmax[0] - d.bmin[0], d.bmax[1] - d.bmin[1], d.bmax[2] - d.bmin[2]],
+        mats: [{ color: [0.74, 0.71, 0.66] }, { color: [0.6, 0.75, 0.9], glass: true }],
+        geoms: (d.geoms || []).map(x => ({ mat: /glass/i.test(x.shader || '') ? 1 : 0, pos: f32(x.pos), nrm: f32(x.nrm), idx: u16(x.idx) })) });
+    // the shapes of the shown models, ten at a time (without their textures)
+    async function gamePictures() {
+        if (GG.loading || !GG.names) return; GG.loading = true;
+        try {
+            for (;;) {
+                const part = GG.names.slice(0, GG.shown).filter(n => !GG.models.has(n)).slice(0, 10); if (!part.length) break;
+                const r = await Model.api('buildings/models', 'POST', { names: part, have: [], notex: true, gta: '' });
+                part.forEach(n => { const m = (r.models || {})[n]; GG.models.set(n, m && !m.error && m.bmin ? asThumb(n, m) : { error: (m && m.error) || 'not found' }); });
+                M.UI.renderLeft();
+            }
+        } catch (e) { toast(e.message, 'err'); }
+        GG.loading = false;
+    }
+    FM.placeGame = function (n) {
+        GG.kinds[n] = GG.cat; gameAdapt.delete(n); M.Furniture.ensure([n]); FM.chosen = 'gta:' + n; M.App.setTool('fit');
+        toast(n + ': click a wall to put it there. The opening is cut to it' + (GG.cat === 'window' ? '.' : (GG.cat === 'garage' ? '; the export moves it up when someone comes near.' : '; the game swings it when pushed.')), 'ok');
+    };
+    function gameSection(root, so) {
+        const open = !!so.fitGame;
+        root.append(el('button', { class: 'sec' + (open ? ' open' : ''), onclick: () => { so.fitGame = !open; M.UI.renderLeft(); if (!open && !GG.names) gameList(); } },
+            el('span', { class: 'arr' }, open ? '▾' : '▸'), el('span', { class: 'st' }, 'From the game: doors, windows, garage doors, gates')));
+        if (!open) return;
+        const body = el('div', { class: 'secbody' }), k = M.UI.kit;
+        body.append(el('div', { class: 'row wrap' }, k.seg(GCATS, GG.cat, v => { GG.cat = v; gameList(); })));
+        const q = el('input', { type: 'text', class: 'grow', placeholder: 'Filter: ph, glass, wood, metal...', value: GG.q, onkeydown: (e) => { if (e.key === 'Enter') { GG.q = q.value.trim().toLowerCase(); gameList(); } } });
+        body.append(el('div', { class: 'row' }, q, el('button', { class: 'btn sm', onclick: () => { GG.q = q.value.trim().toLowerCase(); gameList(); } }, 'Find')));
+        if (GG.busy) body.append(el('div', { class: 'note' }, 'Looking through the game\'s models...'));
+        else if (GG.names) {
+            const grid = el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '5px', maxHeight: '320px', overflowY: 'auto', paddingRight: '2px' } });
+            GG.names.slice(0, GG.shown).forEach(n => {
+                const m = GG.models.get(n);
+                grid.append(el('div', { class: 'pitem', title: n + (m && m.size ? ': ' + f2(m.size[0]) + ' x ' + f2(m.size[2]) + ' m, ' + f2(m.size[1]) + ' m deep' : '') + ' · click to place it', style: { flexDirection: 'column', alignItems: 'center', padding: '4px', gap: '2px', opacity: m && m.error ? 0.5 : 1 }, onclick: () => FM.placeGame(n) },
+                    m && m.geoms ? FM.thumb(m, 52) : el('div', { style: { width: '52px', height: '52px', display: 'flex', alignItems: 'center', justifyContent: 'center' }, class: 'note' }, m ? 'no picture' : '...'),
+                    el('b', { style: { fontSize: '10px', textAlign: 'center', lineHeight: '1.1', wordBreak: 'break-all' } }, n),
+                    m && m.size ? el('span', { class: 'note', style: { margin: 0, fontSize: '10px' } }, f2(m.size[0]) + ' x ' + f2(m.size[2]) + ' m') : null));
+            });
+            if (!GG.names.length) grid.append(el('div', { class: 'note', style: { gridColumn: '1 / -1' } }, 'Nothing of that kind' + (GG.q ? ' with "' + GG.q + '"' : '') + '.'));
+            body.append(grid);
+            if (GG.names.length > GG.shown) body.append(el('button', { class: 'btn sm', onclick: () => { GG.shown += 30; M.UI.renderLeft(); gamePictures(); } }, 'Show more (' + (GG.names.length - GG.shown) + ' left)'));
+            body.append(el('div', { class: 'note' }, GG.names.length + ' model' + (GG.names.length === 1 ? '' : 's') + ': only ' + (GG.cat === 'window' ? 'windows' : 'the ones the game moves (it knows them as doors)') + '. Click one, then click a wall: it stands in the wall and the opening is cut to it.'));
+        }
+        root.append(body);
+    }
+
     FM.panel = function (root) {
         const lib = FM.lib, k = M.UI.kit;
         if (!FM.chosen && lib.loaded && !FM.sel) { /* nothing chosen yet */ }
@@ -581,7 +674,7 @@ window.MLO = window.MLO || {};
         const cat = S.fitCat, q = (S.fitFilter || '').trim().toLowerCase();
         root.append(el('div', { class: 'h' }, 'Models'));
         if (lib.busy) root.append(el('div', { class: 'note' }, 'Reading the models...'));
-        if (lib.error) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, lib.error));
+        if (lib.error) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, lib.error));
         if (!lib.files.length && !lib.busy) root.append(el('div', { class: 'note' }, 'No window or door models yet. Add a .glb with a door, or a file with several windows: each window in it becomes a model of its own.'));
         if (all.length) {
             root.append(el('div', { class: 'row' }, k.seg(KINDS.map(c => [c[0], c[1] + ' (' + all.filter(a => a.kind === c[0]).length + ')']), cat, v => { S.fitCat = v; M.UI.renderLeft(); })));
@@ -608,15 +701,16 @@ window.MLO = window.MLO || {};
             const body = el('div', { class: 'secbody' });
             lib.files.forEach(f => {
                 body.append(el('div', { class: 'row wrap', style: { marginTop: '6px' } }, el('b', { class: 'grow', title: f.file, style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '11.5px' } }, f.title || f.file, f.builtin ? el('span', { class: 'note', style: { margin: '0 0 0 6px', fontWeight: 400 } }, 'built in') : null), k.seg([['window', 'Windows'], ['door', 'Door'], ['frame', 'Frame']], FM.kindOf(f.file), v => FM.setKind(f.file, v))));
-                if (f.error) body.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, f.file + ': ' + f.error));
+                if (f.error) body.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, f.file + ': ' + f.error));
                 else body.append(el('div', { class: 'note', style: { margin: '0' } }, f.models.length + ' model' + (f.models.length === 1 ? '' : 's') + (f.author ? ' · by ' + f.author.replace(/\s*\(.*$/, '') : '') + (f.license ? ' · ' + f.license.replace(/\s*\(.*$/, '').replace(/-/g, ' ') : '')));
             });
             body.append(el('div', { class: 'note' }, 'The licence of a model you place goes with the export (README).'));
             root.append(body);
         }
+        gameSection(root, so);
         const ch = FM.chosen ? FM.model(FM.chosen) : null;
         root.append(el('div', { class: 'note' }, ch ? 'Chosen: ' + ch.name + '. Click a wall to put it there (you can keep clicking to place more). Esc clears the choice.' : (lib.files.length ? 'Click a model to choose it, then click a wall.' : '')));
-        if (ch) {
+        if (ch && !ch.gta) {
             // setting the chosen model up before it is placed: a model can lie down or face the wrong way as it comes out of its file
             const turned = ch.rot && ch.rot.some((v, i) => v !== SETUP.ident[i]), odd = ch.size[2] > 4.5 || ch.size[2] < 0.3;
             root.append(el('div', { class: 'h' }, 'Set up: ' + ch.name));
@@ -630,7 +724,11 @@ window.MLO = window.MLO || {};
         if (it) {
             const m = FM.model(it.m), door = it.kind === 'door', keep = S.fitKeep !== false;
             root.append(el('div', { class: 'h' }, 'Selected: ' + (m ? m.name : 'missing model')));
-            if (!m) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, 'The model ' + it.m + ' is not in the library (is ' + it.f + ' still in the project?). It is left out of the export.'));
+            if (it.g && m) { const sc = [it.w / m.size[0], it.d / m.size[1], it.h / m.size[2]], resized = sc.some(v => Math.abs(v - 1) > 0.005);
+                root.append(el('div', { class: 'row wrap' }, el('span', { class: 'note grow' }, resized ? 'Resized: the export writes a copy of the game\'s model at this size (with its collision), still a door the game moves.' : 'In its own size (' + f2(m.size[0]) + ' x ' + f2(m.size[2]) + ' m).'),
+                    resized ? el('button', { class: 'btn sm', onclick: () => FM.set({ w: r3(m.size[0]), d: r3(m.size[1]), h: r3(m.size[2]) }) }, 'Own size') : null)); }
+            if (it.g) root.append(el('div', { class: 'note' }, 'A model of the game. ' + (it.kind === 'window' ? 'The opening is cut to it.' : (/roll|lift/.test(it.mode || '') ? 'A garage door: client/doors.lua of the export moves it up when someone comes near.' : 'The game moves it: it swings when pushed (or your door script moves it).'))));
+            if (!m) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, 'The model ' + it.m + ' is not in the library (is ' + it.f + ' still in the project?). It is left out of the export.'));
             const sz = (key, v) => {
                 v = Math.max(0.05, v); const f = v / it[key], patch = {};
                 if (keep && it[key] > 0) { patch.w = r3(it.w * f); patch.d = r3(it.d * f); patch.h = r3(it.h * f); } else patch[key] = r3(v);
@@ -645,9 +743,11 @@ window.MLO = window.MLO || {};
             if (door) {
                 const mode = it.mode || 'swing';
                 root.append(el('div', { class: 'h' }, 'How it opens'));
-                root.append(el('div', { class: 'row wrap' }, k.seg([['swing', 'Swings'], ['auto', 'Swings both ways'], ['slide', 'Slides'], ['lift', 'Opens up (garage)']], mode, v => FM.set({ mode: v }))));
+                root.append(el('div', { class: 'row wrap' }, k.seg([['swing', 'Swings'], ['auto', 'Swings both ways'], ['slide', 'Slides'], ['lift', 'GTA / sectional'], ['roll', 'Roller shutter']], mode, v => FM.set({ mode: v }))));
                 root.append(el('div', { class: 'note' }, mode === 'lift'
                     ? 'A garage door: when someone comes within 4 m (on foot or in a car, on either side) it folds up into the garage like a sectional door, about its top edge, and lies under the ceiling; it comes down again when they are gone. It folds towards the side your rooms are on. The export\'s client/doors.lua moves it; no door script is needed.'
+                    : mode === 'roll'
+                    ? 'A roller shutter: when someone comes within 4 m it rolls upward into the lintel and closes again when they are gone. Use a shutter or roller-door model from the GTA door search, then size it to the opening. The export\'s client/doors.lua moves it; no door script is needed.'
                     : mode === 'slide'
                     ? 'A sliding door:when someone comes within 2 m it slides aside (into the wall, towards the side set below) and slides shut when they are gone. A double door opens to both sides at once. The export\'s client/doors.lua moves it; no door script is needed.'
                     : (mode === 'auto'
@@ -657,7 +757,7 @@ window.MLO = window.MLO || {};
                 if (it.double) root.append(el('div', { class: 'note' }, 'The width is the whole doorway: each leaf is half of it, hinged on the outer edges (the orange lines) and meeting in the middle where their knobs are (the right leaf is the model mirrored). Each leaf is a door prop of its own for your door script. Turning this on doubles the width (each leaf keeps the size the door had), turning it off halves it.'));
             }
             if (door && !it.double && it.mode === 'slide') root.append(el('div', { class: 'row' }, el('label', null, 'Slides to'), k.seg([['l', 'Left'], ['r', 'Right']], it.hinge || 'l', v => FM.set({ hinge: v }))), el('div', { class: 'note' }, 'Seen from the front (the green arrow points to the front): the door slides towards the orange line, by its own width, into the wall.'));
-            else if (door && !it.double && it.mode !== 'lift') root.append(el('div', { class: 'row' }, el('label', null, 'Hinge'), k.seg([['l', 'Left'], ['r', 'Right']], it.hinge || 'l', v => FM.set({ hinge: v }))), el('div', { class: 'note' }, 'Seen from the front (the green arrow points to the front); the orange line is the hinge, it starts on the side opposite the knob. The door is a prop of its own that swings about the hinge, with a collision box the thickness of the leaf: your door script (ox_doorlock...) moves it. Its opening in the interior wall is centred on the door, with room each side for the leaf to turn, so it does not catch on the wall.'));
+            else if (door && !it.double && it.mode !== 'lift' && it.mode !== 'roll') root.append(el('div', { class: 'row' }, el('label', null, 'Hinge'), k.seg([['l', 'Left'], ['r', 'Right']], it.hinge || 'l', v => FM.set({ hinge: v }))), el('div', { class: 'note' }, 'Seen from the front (the green arrow points to the front); the orange line is the hinge, it starts on the side opposite the knob. The door is a prop of its own that swings about the hinge, with a collision box the thickness of the leaf: your door script (ox_doorlock...) moves it. Its opening in the interior wall is centred on the door, with room each side for the leaf to turn, so it does not catch on the wall.'));
             if (door) {
                 root.append(chk('Also block the doorway with solid collision (it stays when a door script opens the door)', () => !!it.solid, v => FM.set({ solid: v })));
                 root.append(el('div', { class: 'note' }, 'The door prop has its own collision box. If the game gives you no collision there, turn this on: the doorway is blocked by the interior\'s own collision, which always works, but it stays blocked when the door is swung open.'));

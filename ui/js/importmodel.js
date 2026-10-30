@@ -725,9 +725,13 @@ window.MLO = window.MLO || {};
             for (let i = 0; i < N; i++) if (!out[i] && !solid[i]) ins[i] = 1;
             lab.fill(-1);
             for (let i0 = 0; i0 < N; i0++) {
-                if (!ins[i0] || lab[i0] >= 0) continue; const comp = [i0], st = [i0]; lab[i0] = i0; let roof = 0;
-                while (st.length) { const i = st.pop(), x = i % nx; if (top[i] > H - 0.1) roof++; for (const q of [x > 0 ? i - 1 : -1, x < nx - 1 ? i + 1 : -1, i - nx, i + nx]) if (q >= 0 && q < N && ins[q] && lab[q] < 0) { lab[q] = i0; comp.push(q); st.push(q); } }
-                if (comp.length * res * res < 1 || roof < comp.length * 0.5) comp.forEach(i => { ins[i] = 0; }); else cnt += comp.length;
+                if (!ins[i0] || lab[i0] >= 0) continue; const comp = [i0], st = [i0]; lab[i0] = i0; let roof = 0, edgeOpen = 0;
+                while (st.length) { const i = st.pop(), x = i % nx; if (top[i] > H - 0.1) roof++; for (const q of [x > 0 ? i - 1 : -1, x < nx - 1 ? i + 1 : -1, i - nx, i + nx]) {
+                    if (q >= 0 && q < N && ins[q] && lab[q] < 0) { lab[q] = i0; comp.push(q); st.push(q); }
+                    else if (q < 0 || q >= N || out[q]) edgeOpen++;
+                } }
+                const openRatio = edgeOpen / Math.max(1, comp.length * 4);
+                if (comp.length * res * res < 1 || roof < comp.length * 0.5 || (openRatio > 0.18 && roof < comp.length * 0.7)) comp.forEach(i => { ins[i] = 0; }); else cnt += comp.length;
             }
             const hole = new Uint8Array(N), maxHole = 2.5 / (res * res);
             for (let i0 = 0; i0 < N; i0++) {
@@ -745,6 +749,21 @@ window.MLO = window.MLO || {};
         // width closed) is outside. When those walls leak (a shop window without glass), the inside of all of them stays as it is.
         const FH = inside(0.8, solidHi);
         if (FH && FH.cnt >= 0.7 * F.cnt) { const keep = dilate(FH.ins, G, Math.ceil(0.15 / res)); for (let i = 0; i < N; i++) if (F.ins[i] && !keep[i]) { F.ins[i] = 0; F.out[i] = 1; } }
+        // keep only the main enclosed cavity; open porch/terrace strips that are only open on the outside edge are not counted as rooms.
+        const trimOpenPerimeter = (mask, outside) => {
+            const out = mask.slice();
+            for (let i = 0; i < N; i++) {
+                if (!mask[i]) continue;
+                let sideOpen = 0;
+                const x = i % nx, y = (i - x) / nx;
+                if (x <= 1 || outside[i - 1]) sideOpen++;
+                if (x >= nx - 2 || outside[i + 1]) sideOpen++;
+                if (y <= 1 || outside[i - nx]) sideOpen++;
+                if (y >= ny - 2 || outside[i + nx]) sideOpen++;
+                if (sideOpen >= 2) out[i] = 0;
+            }
+            return out;
+        };
         // the model's own inner walls are not walls of the room: the inside is closed over walls up to 70 cm thick (grown and shrunk again); it never reaches
         // past the outer walls
         const rcl = Math.ceil(0.35 / res), grown = dilate(F.ins, G, rcl), notGrown = new Uint8Array(N); for (let i = 0; i < N; i++) notGrown[i] = grown[i] ? 0 : 1;
@@ -752,6 +771,8 @@ window.MLO = window.MLO || {};
         for (let i = 0; i < N; i++) ins[i] = (F.ins[i] || (!shrunkOut[i] && !F.out[i] && top[i] > H - 0.1)) ? 1 : 0;
         // what is beyond a wall and not the room: the outside, and also a space closed in only low or not under the roof (a porch behind its parapet, a yard)
         const beyond = new Uint8Array(N); for (let i = 0; i < N; i++) beyond[i] = (!ins[i] && !solid[i]) ? 1 : 0;
+        const trimmed = trimOpenPerimeter(ins, beyond);
+        for (let i = 0; i < N; i++) ins[i] = trimmed[i];
         // the planes of the walls that are square to the grid, and the extent of the inside: they cut the inside into cells
         let ix0 = nx, ix1 = -1, iy0 = ny, iy1 = -1; for (let i = 0; i < N; i++) if (ins[i]) { const x = i % nx, y = (i - x) / nx; ix0 = Math.min(ix0, x); ix1 = Math.max(ix1, x); iy0 = Math.min(iy0, y); iy1 = Math.max(iy1, y); }
         const bx0 = x0 + ix0 * res, bx1 = x0 + (ix1 + 1) * res, by0 = y0 + iy0 * res, by1 = y0 + (iy1 + 1) * res, cand = [[], []];
@@ -821,7 +842,8 @@ window.MLO = window.MLO || {};
     // creates the rooms (replacing the rooms and cut-outs there are); the grid is put on the building first when it was never set
     IM.autoRooms = function () {
         const f = imp().frame;
-        if (!(f.x || f.y || f.z || f.heading)) {
+        const frameIsSet = !!f && [f.x, f.y, f.z, f.heading].some(v => v != null && !Number.isNaN(v));
+        if (!frameIsSet) {
             if (IM.selComps) IM.centerOnBuilding();
             else if (IM.comp && IM.comp.comps.length === 1) { const fit = IM.fitFrame([0]); Model.edit(P => { P.import.frame = { x: fit.x, y: fit.y, z: fit.z, heading: fit.heading }; }); }
             else return { error: 'The model holds several buildings: select the building first (Select building, B).' };
@@ -1029,17 +1051,52 @@ window.MLO = window.MLO || {};
     // building. Each building has its own grid, so they are turned into the model's own coordinates here (and the host is told there is no grid: IM.NOFRAME).
     IM.NOFRAME = { x: 0, y: 0, z: 0, heading: 0 };
     const q4 = (v) => Math.round(v * 10000) / 10000;
+    // How far an opening reaches across a thick wall. The faces you click are the building's outside, and its own depth (80 cm about them) does not reach the
+    // room behind a thick wall (an old stone building's, a city hall's): the room's wall and the building's collision in between would stay shut. So it reaches
+    // to the nearest wall of a room behind it (up to 1.6 m away, of the rooms whose side overlaps the opening) and 15 cm past it. Returns the span along the
+    // grid's axis across the wall (y for a wall along x, x for one along y) from the opening's middle, { lo, hi }, or null (no room wall near: its own depth).
+    // rooms: the room rectangles of its building ([x0, y0, x1, y1] in the grid's frame).
+    IM.reach = function (k, rooms) {
+        const q = (((k.yaw * 180 / Math.PI) % 360) + 360) % 360, r90 = q % 90; if (Math.min(r90, 90 - r90) > 6) return null;
+        const horiz = Math.round(q / 90) % 2 === 0, cu = horiz ? k.cx : k.cy, cn = horiz ? k.cy : k.cx, hw = k.w / 2, d = k.d || 0.8; let best = null;
+        (rooms || []).forEach(r => {
+            const u0 = horiz ? r[0] : r[1], u1 = horiz ? r[2] : r[3]; if (Math.min(u1, cu + hw) - Math.max(u0, cu - hw) < 0.1) return;
+            (horiz ? [r[1], r[3]] : [r[0], r[2]]).forEach(e => { const dn = e - cn; if (Math.abs(dn) <= 1.6 && (best === null || Math.abs(dn) < Math.abs(best))) best = dn; });
+        });
+        if (best === null || Math.abs(best) + 0.15 <= d / 2) return null;
+        return { lo: Math.min(-d / 2, best - 0.15), hi: Math.max(d / 2, best + 0.15), wall: best, horiz };
+    };
+    // the room rectangles of a building (its project data d), every floor
+    IM.roomRects = function (d) {
+        const out = [], add = (sh) => ((sh && sh.ops) || []).forEach(o => { if (o.op === 'add' && o.r) out.push(o.r); });
+        add(d.shell); ((d.import && d.import.levels) || []).forEach(l => { if (l.snap) add(l.snap.shell); });
+        return out;
+    };
     IM.allCutters = function () {
         const out = [];
         Model.bldAll(S.project).forEach(b => {
-            const f = b.d.import.frame, h = (f.heading || 0) * Math.PI / 180, c = Math.cos(h), s = Math.sin(h);
+            const f = b.d.import.frame, h = (f.heading || 0) * Math.PI / 180, c = Math.cos(h), s = Math.sin(h), rooms = IM.roomRects(b.d);
             const push = (id, type, mesh, cx, cy, zb, w, hh, d, yaw) => out.push({ id, type, mesh, cx: q4(f.x + cx * c - cy * s), cy: q4(f.y + cx * s + cy * c), zb: q4(f.z + zb), w, h: hh, d, yaw: yaw + h });
-            (b.d.import.cutters || []).forEach(k => {
+            (b.d.import.cutters || []).forEach(k0 => {
+                // (an opening in a thick wall reaches the room behind it: its box is made deeper and moved across the wall)
+                const rc = IM.reach(k0, rooms), along = (lo, hi) => rc.horiz ? { cy: q4(k0.cy + (lo + hi) / 2), d: q4(hi - lo) } : { cx: q4(k0.cx + (lo + hi) / 2), d: q4(hi - lo) };
+                const k = rc ? Object.assign({}, k0, along(rc.lo, rc.hi)) : k0;
                 // a door whose frame is bigger than its opening: the collision opens to the frame, and the model's wall is cut out to the frame (a cutter of its own that
                 // only cuts the wall around it: from 3 cm in front of the opening's plane to 31 cm behind it, where the model's own wall and its reveals are)
-                const fe = IM.doorFrameExtent(k), bigger = fe && (fe.cu > fe.hw + 0.002 || fe.ct > fe.zt + 0.002);
+                const fe = IM.doorFrameExtent(k0), bigger = fe && (fe.cu > fe.hw + 0.002 || fe.ct > fe.zt + 0.002);
                 push(k.id, k.type, k.mesh, k.cx, k.cy, k.zb, bigger ? q4(2 * fe.cu) : k.w, bigger ? q4(fe.ct - k.zb) : k.h, k.d, k.yaw);
-                if (bigger) { const nx = -Math.sin(k.yaw), ny = Math.cos(k.yaw); push(k.id + 'w', 'cut', true, k.cx - nx * 0.14, k.cy - ny * 0.14, k.zb, q4(2 * fe.cu), q4(fe.ct - k.zb), 0.34, k.yaw); }
+                if (bigger) { const nx = -Math.sin(k0.yaw), ny = Math.cos(k0.yaw); push(k0.id + 'w', 'cut', true, k0.cx - nx * 0.14, k0.cy - ny * 0.14, k0.zb, q4(2 * fe.cu), q4(fe.ct - k0.zb), 0.34, k0.yaw); }
+                // An opening made from the model's faces takes out only the faces you clicked. In a thick wall the model also has faces between them and the room (its
+                // inside surface): those are cut out too, from 5 cm behind the clicked faces to 15 cm past the room's wall, 2 cm inside the opening's sides so its reveals stay.
+                if (rc && k0.face) {
+                    const s = rc.wall > 0 ? 1 : -1, a = s > 0 ? 0.05 : rc.wall - 0.15, b = s > 0 ? rc.wall + 0.15 : -0.05, g = along(a, b);
+                    push(k0.id + 'r', 'cut', true, g.cx != null ? g.cx : k0.cx, g.cy != null ? g.cy : k0.cy, q4(k0.zb + 0.01), q4(Math.max(0.1, k0.w - 0.04)), q4(Math.max(0.1, k0.h - 0.02)), g.d, k0.yaw);
+                }
+            });
+            // a door or a window of the game placed in a wall (Models tool): the building's wall and its collision open to it, 40 cm in front of it and behind it
+            (b.d.import.fits || []).filter(f => f.g && f.open !== false && f.w > 0.1 && f.h > 0.1).forEach(f => {
+                const c = f.kind === 'door' && M.FitModels ? M.FitModels.doorCut(f) : { cx: f.cx, cy: f.cy, zb: f.zb, w: f.w, h: f.h };
+                push('gfit' + f.id, f.kind === 'window' ? 'window' : 'door', true, c.cx, c.cy, c.zb, q4(c.w), q4(c.h), 0.8, f.yaw);
             });
         });
         return out;

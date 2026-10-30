@@ -8,7 +8,15 @@ window.MLO = window.MLO || {};
     const kit = () => M.UI.kit;
     const toast = (t, k) => bus.emit('toast', { text: t, kind: k });
 
-    const TOOLS = [['room', 'Add room', '1'], ['cut', 'Cut out', '2'], ['part', 'Partition', '3'], ['door', 'Door', '4'], ['window', 'Window', '5'], ['arch', 'Archway', '6'], ['floor', 'Floor paint', '7'], ['select', 'Select', 'V'], ['eraser', 'Eraser', 'X']];
+    // the tool rail: a button per group, the panel shows the group's tools
+    const GROUPS = [
+        { id: 'select', name: 'Select and erase', short: 'Select', icon: 'select', tools: [['select', 'Select', 'V'], ['eraser', 'Eraser', 'X']] },
+        '|',
+        { id: 'rooms', name: 'Rooms', short: 'Rooms', icon: 'rooms', tools: [['room', 'Add room', '1'], ['cut', 'Cut out', '2'], ['part', 'Partition', '3']] },
+        { id: 'open', name: 'Doors and windows', short: 'Openings', icon: 'door', tools: [['door', 'Door', '4'], ['window', 'Window', '5'], ['arch', 'Archway', '6']] },
+        { id: 'floor', name: 'Floor paint', short: 'Floor', icon: 'paint', tools: [['floor', 'Floor paint', '7']] }
+    ];
+    VU.railGroups = () => GROUPS;
     const HELP = {
         room: 'Drag a rectangle to add it to the interior. Corners snap to the house\'s walls and to 5 cm.',
         cut: 'Drag a rectangle to take it out of the interior (a column, a closet, a bay you do not want).',
@@ -77,13 +85,13 @@ window.MLO = window.MLO || {};
         const status = el('div', { class: 'note', style: { minHeight: '18px' } });
         const btn = el('button', { class: 'btn primary', style: { width: '100%', padding: '9px', marginTop: '6px' }, onclick: () => grab(status, btn) }, V.grabbed ? 'Grab again' : 'Grab this house');
         root.append(btn, status);
-        if (lastError) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, lastError));
+        if (lastError) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, lastError));
         if (V.grabbed) {
             root.append(el('div', { class: 'h' }, 'What was found'));
             const f = V.frame; if (f) root.append(el('div', { class: 'kv' }, 'Frame heading', el('b', null, f1(f.heading) + '°'), 'Floor height', el('b', null, f1(f.oz, 3) + ' m'), 'Entrance at', el('b', null, f1(f.ox) + ', ' + f1(f.oy))));
             root.append(el('div', { class: 'note' }, (V.covering || []).length ? 'Map pieces: ' + V.covering.join(', ') : ''));
             const lg = el('div', { class: 'log' }); (V.log || []).forEach(l => lg.append(el('div', null, l))); root.append(lg);
-            if (!V.found) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, 'No wall was found in front of you, so there is no entrance door yet. Draw the rooms with Add room and cut a door with the Door tool.'));
+            if (!V.found) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, 'No wall was found in front of you, so there is no entrance door yet. Draw the rooms with Add room and cut a door with the Door tool.'));
             root.append(el('div', { class: 'row', style: { marginTop: '8px' } }, el('button', { class: 'btn sm', onclick: () => M.App.setTab('build') }, 'Go to Build')));
         }
     };
@@ -99,14 +107,10 @@ window.MLO = window.MLO || {};
     }
 
     VU.renderBuild = function (root) {
-        const t = S.shellTool, P = S.project, sh = P.shell, k = kit(), grid = el('div', { class: 'tools' });
-        TOOLS.forEach(tl => grid.append(el('button', { class: 'tool' + (t === tl[0] ? ' on' : ''), onclick: () => M.App.setTool(tl[0]) }, tl[1], el('kbd', null, tl[2]))));
-        root.append(el('div', { class: 'h' }, 'Tools'), grid);
-        root.append(el('div', { class: 'h' }, (TOOLS.filter(x => x[0] === t)[0] || ['', 'Tool'])[1]), el('div', { class: 'note' }, HELP[t] || ''));
+        const t = S.shellTool, P = S.project, sh = P.shell, k = kit();
+        M.Layout.toolHead(root, M.Layout.groupOf(GROUPS, t), t);
+        root.append(el('div', { class: 'note what' }, HELP[t] || ''));
         if (t === 'floor') root.append(el('div', { class: 'row' }, el('label', null, 'Floor'), k.swatchEl(S.brush.floor, 28), el('span', { class: 'grow' }, TEX.def(S.brush.floor).name), el('button', { class: 'btn sm', onclick: () => { S.paintTarget = 'floor'; M.App.setTab('paint'); } }, 'Change')));
-
-        VU.renderSelected(root, k);
-        VU.renderRectangles(root, k);
     };
 
     // the selected opening or partition: its numbers
@@ -161,6 +165,23 @@ window.MLO = window.MLO || {};
 
     // ---------------- right panel ----------------
     VU.renderRight = function (root) {
+        const sel = S.shellSel ? S.shellSel.kind + S.shellSel.id : null, k = kit();
+        M.Layout.watch(sel);
+        M.Layout.inspector(root, [
+            { id: 'sel', label: 'Selected', badge: sel ? '1' : null, render: (b) => { VU.renderSelected(b, k); if (!b.childNodes.length) M.Layout.empty(b, 'Nothing selected. Click a door, window or partition with Select (V).'); } },
+            { id: 'scene', label: 'Scene', render: (b) => VU.renderRectangles(b, k) },
+            { id: 'project', label: 'Project', render: renderProject }
+        ]);
+    };
+    VU.viewItems = function () {
+        const R = M.App.renderer;
+        return [{ seg: [['off', 'Off'], ['ghost', 'Ghost'], ['solid', 'Solid']], cur: S.refMode, label: 'House', pick: v => { S.refMode = v; M.UI.renderRight(); } }, '|',
+            { icon: 'roof', label: 'Ceiling', on: S.view.roof, act: () => { S.view.roof = !S.view.roof; M.UI.renderRight(); } },
+            { icon: 'grid', label: 'Grid', on: S.view.grid, act: () => { S.view.grid = !S.view.grid; R.showGrid = S.view.grid; M.UI.renderRight(); } },
+            { icon: 'shield', label: 'Collision', title: 'Game collision (orange)', on: S.showCollision, act: () => { S.showCollision = !S.showCollision; M.UI.renderRight(); } }, '|',
+            { icon: 'top', label: 'Top-down', title: 'Top-down (T)', act: () => M.App.toggleTopDown() }, { icon: 'frame', label: 'Frame', title: 'Frame the house (Home)', act: () => M.App.frameAll() }];
+    };
+    function renderProject(root) {
         const P = S.project, k = kit();
         root.append(el('div', { class: 'h' }, 'View'));
         root.append(el('div', { class: 'row' }, el('label', null, 'The house'), k.seg([['off', 'Off'], ['ghost', 'Ghost'], ['solid', 'Solid']], S.refMode, v => { S.refMode = v; M.UI.renderRight(); })));
@@ -189,7 +210,7 @@ window.MLO = window.MLO || {};
         root.append(el('div', { class: 'row' }, el('label', null, 'Label'), text('label', P.name)));
         root.append(el('div', { class: 'h' }, 'Where it goes'));
         const pl = placement(P);
-        if (!pl) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, 'No house has been grabbed yet. Use the House tab first.'));
+        if (!pl) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, 'No house has been grabbed yet. Use the House tab first.'));
         else {
             ex.place = el('div', { class: 'kv' }); root.append(ex.place);
             root.append(el('div', { class: 'note' }, 'The position and heading come from the house you grabbed. Nudge them only if the walls do not line up in the game.'));
@@ -198,6 +219,7 @@ window.MLO = window.MLO || {};
             VU.updatePlace();
         }
         root.append(el('div', { class: 'h' }, 'Options'));
+        root.append(M.UI.ambientRow(X));
         root.append(el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: X.autoLights ? true : null, onchange: (e) => { X.autoLights = e.target.checked; Model.touch(); } }), 'Automatic ceiling lights in every room'));
         root.append(el('div', { class: 'row' }, el('label', null, 'Output folder'), el('input', { type: 'text', class: 'grow', value: X.outDir || '', placeholder: 'default: the output folder next to the program', onchange: (e) => { X.outDir = e.target.value.trim(); Model.touch(); } })));
         root.append(el('div', { class: 'h' }, 'Game files'));
@@ -232,7 +254,7 @@ window.MLO = window.MLO || {};
             const patch = anyCut ? { enabled: true, gta: P.vanilla.gta || '', frame: { ox: pl.x, oy: pl.y, oz: pl.z, heading: pl.heading }, ceilH: P.settings.ceilH, rects: Shell.regionRects(P.shell), openings: built.shell.resolved,
                 doors: X.cutDoor !== false, windows: X.cutWindows !== false, collision: X.cutCollision !== false, occluders: X.cutOccluders !== false } : undefined;
             if (patch) log('Cutting the game files for this house (the first run reads the game, about half a minute)...');
-            const model = Mesher.toExport(P, built, { light: {}, model: { resource, prefix: P.prefix, label: X.label || P.name, timecycle: 'hash_E83C53FC', placement: pl, entranceNote: 'the grabbed house door at ' + (P.vanilla.door || '').replace(/\s+/g, ' ').trim(), outDir: X.outDir || undefined, patch } });
+            const model = Mesher.toExport(P, built, { light: {}, model: { resource, prefix: P.prefix, label: X.label || P.name, timecycle: 'hash_E83C53FC', ambient: X.ambient || 'normal', placement: pl, entranceNote: 'the grabbed house door at ' + (P.vanilla.door || '').replace(/\s+/g, ' ').trim(), outDir: X.outDir || undefined, patch } });
             const res = await Model.api('export', 'POST', model);
             if (!res.ok) { log('Export failed: ' + res.error, 'bad'); console.error(res.detail); }
             else {

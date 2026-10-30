@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Security;
@@ -26,7 +27,7 @@ namespace MloCreator
         public Place(string label, string words, float x, float y, float r) { Label = label; Words = words; X = x; Y = y; R = r; }
     }
 
-    public static class Buildings
+    public static partial class Buildings
     {
         static List<MloEntry> idx; static string idxStamp;
         static readonly object gate = new object();
@@ -308,9 +309,9 @@ namespace MloCreator
         {
             Vanilla.Init(gta, cacheDir);
             if (string.IsNullOrEmpty(ytyp)) ytyp = Vanilla.YtypOf(hash);
-            RpfFile owner = null; RpfFileEntry fe = string.IsNullOrEmpty(ytyp) ? null : Vanilla.GetEntry(ytyp.ToLowerInvariant(), out owner);
-            if (fe == null) throw new Exception("The game has no map types file " + (ytyp ?? "") + " for this interior.");
-            YtypFile yt = new YtypFile(); yt.Load(owner.ExtractFile(fe), fe);
+            RpfFileEntry fe = null; byte[] yd = string.IsNullOrEmpty(ytyp) ? null : Vanilla.Bytes(ytyp, out fe);
+            if (yd == null) throw new Exception("The game has no map types file " + (ytyp ?? "") + " for this interior.");
+            YtypFile yt = new YtypFile(); yt.Load(yd, fe);
             MloArchetype m = null;
             if (yt.AllArchetypes != null) foreach (Archetype a in yt.AllArchetypes) { MloArchetype ma = a as MloArchetype; if (ma != null && ma.Hash.Hash == hash) m = ma; }
             if (m == null) throw new Exception(ytyp + " does not define this interior.");
@@ -352,6 +353,40 @@ namespace MloCreator
             res["bmin"] = V3(m.BBMin); res["bmax"] = V3(m.BBMax);
             return res;
         }
+        // ---------------- the game's door models, for an opening in a new wall, and its windows, garage doors and gates for the Models tool ----------------
+        // Every model whose name says what it is (the game's interior doors are v_ilev_..., most others prop_..._door...), with every word of the query; the
+        // interior doors first. The game knows them as doors (they swing when pushed), so they need nothing else. kind: "door" (doors and gates, the default),
+        // "window", "garage" (garage doors, roller shutters), "gate"; windows and doors that break are .yft files and are listed too.
+        static readonly Regex GarageName = new Regex("garage|_gar_|roller|shutter|_rolldoor|rolldr"), GateName = new Regex("gate|_barrier|fence_door"), DoorishName = new Regex("door|gate|garage|shutter|roller|barrier|_gar_|ilev|_dr_|entrance|rolldr");
+        static readonly Dictionary<string, Regex> DoorKinds = new Dictionary<string, Regex> {
+            { "door", DoorishName }, { "window", new Regex("window|_win_|_win\\d|_wndw|_wnd_|windw") }, { "garage", DoorishName }, { "gate", DoorishName } };
+        static readonly Regex NotAWindow = new Regex("frame|sill|curtain|blind|clean|box|sign|shop|display|counter|seat|board|_lod|light|tint|sticker|grill|bars|frm");
+        public static List<object> DoorSearch(string query, string gta, string cacheDir, string kind = "door")
+        {
+            Vanilla.Init(gta, cacheDir);
+            string[] words = Norm(query).Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            Regex want; if (kind == null || !DoorKinds.TryGetValue(kind, out want)) want = DoorKinds["door"];
+            List<string> hits = new List<string>(); HashSet<string> seen = new HashSet<string>();
+            foreach (string n in Vanilla.Names(".ydr").Concat(Vanilla.Names(".yft")))
+            {
+                string stem = n.Substring(0, n.Length - 4);
+                if (!want.IsMatch(stem) || !seen.Add(stem) || Regex.IsMatch(stem, "_lod|slod|\\+hi|proxy|_frame|_glow|_emissive|_dam|_ng$|^hei_heist_|_col$|_shadow|_reflect|_decal|_light")) continue;
+                // (only what works: a door, a gate or a garage door the game moves; a window that is a window, not a frame, a sill or a shop sign)
+                if (kind == "window") { if (NotAWindow.IsMatch(stem)) continue; }
+                else
+                {
+                    if (!Vanilla.IsWorkingDoor(stem)) continue;
+                    bool garage = GarageName.IsMatch(stem), gate = !garage && GateName.IsMatch(stem);
+                    if ((kind == "garage") != garage || (kind == "gate") != gate) continue;
+                }
+                bool all = true; foreach (string w in words) if (w != "door" && w != "tuer" && w != "tur" && w != "window" && w != "fenster" && stem.IndexOf(w, StringComparison.Ordinal) < 0) { all = false; break; }
+                if (all) hits.Add(stem);
+            }
+            hits.Sort(delegate (string a, string b) { bool ia = a.StartsWith("v_ilev_"), ib = b.StartsWith("v_ilev_"); if (ia != ib) return ia ? -1 : 1; return string.CompareOrdinal(a, b); });
+            List<object> res = new List<object>(); foreach (string h in hits) { if (res.Count >= 400) break; res.Add(h); }
+            return res;
+        }
+
         // ---------------- writing a changed interior back: a resource that replaces the game's map types file ----------------
         // The game's .ytyp is read as CodeWalker's XML and only the interior's parts are changed: its objects (each one that came from the game keeps its own
         // entry, so lights and other extensions stay; new ones are written fresh), the objects of each room and portal, and the entity sets. Everything else in
@@ -362,9 +397,9 @@ namespace MloCreator
             Vanilla.Init(gta, cacheDir);
             List<string> log = new List<string>(), files = new List<string>(), warns = new List<string>();
             string ytyp = J.S(J.G(game, "ytyp"), "").ToLowerInvariant(); uint hash = (uint)J.D(J.G(game, "hash"), 0); string mloName = J.S(J.G(game, "name"), "");
-            RpfFile owner; RpfFileEntry fe = Vanilla.GetEntry(ytyp, out owner);
-            if (fe == null) throw new Exception("The game has no map types file " + ytyp + ".");
-            YtypFile yt = new YtypFile(); yt.Load(owner.ExtractFile(fe), fe);
+            RpfFileEntry fe; byte[] yd = Vanilla.Bytes(ytyp, out fe);
+            if (yd == null) throw new Exception("The game has no map types file " + ytyp + ".");
+            YtypFile yt = new YtypFile(); yt.Load(yd, fe);
             string fn; XmlDocument doc = new XmlDocument(); doc.LoadXml(MetaXml.GetXml(yt, out fn));
 
             XmlNode arch = null;
@@ -385,24 +420,64 @@ namespace MloCreator
             if (setsEl != null) foreach (XmlNode s in setsEl.SelectNodes("Item")) { setNodes.Add(s); XmlNode se = s.SelectSingleNode("entities"); if (se != null) foreach (XmlNode n in se.SelectNodes("Item")) orig.Add(n); }
 
             List<object> ents = J.A(J.G(game, "entities"));
-            int nRooms = roomsEl == null ? 0 : roomsEl.SelectNodes("Item").Count;
+            // the folder of the resource (a file left from an earlier export would be streamed too), and the prefix of the files it makes
+            // (an MLO resource opened from its folder: the changes go back into it, after it is zipped next to itself)
+            string src = J.S(J.G(game, "src"), ""), snap = J.S(J.G(game, "snap"), ""); bool own = src.Length > 0; string zip = null; HashSet<string> before = null;
+            string res, dir, stream;
+            if (own)
+            {
+                dir = Path.GetFullPath(src).TrimEnd('\\'); if (Vanilla.ResourceDir == null || !Vanilla.ResourceDir.Equals(dir, StringComparison.OrdinalIgnoreCase)) throw new Exception("The resource " + dir + " is not the one read.");
+                res = Path.GetFileName(dir); stream = Path.Combine(dir, "stream"); Directory.CreateDirectory(stream);
+                zip = BackupResource(dir, snap, log, out before);
+            }
+            else
+            {
+                res = Regex.Replace((resource ?? "").ToLowerInvariant(), "[^a-z0-9_\\-]", "_").Trim('_'); if (res.Length == 0) res = "mlo_" + Regex.Replace(mloName.ToLowerInvariant(), "[^a-z0-9_]", "_") + "_edit";
+                dir = Path.Combine(outRoot, res); stream = Path.Combine(dir, "stream");
+                if (Directory.Exists(stream)) foreach (string old in Directory.GetFiles(stream)) File.Delete(old);
+                Directory.CreateDirectory(stream);
+            }
+            string P = Regex.Replace(res.ToLowerInvariant().Replace("-", "_"), "[^a-z0-9_]", "_"); P = Regex.Replace(P, "_+", "_"); if (P.Length > 12) P = P.Substring(0, 12); P = P.TrimEnd('_') + "_";
+            // (new walls of an earlier session in the resource keep their names: this one's get a prefix of their own)
+            string WP = P; if (own) for (int k = 2; Vanilla.IsLoose(WP + "tex.ytd") || Vanilla.LooseNames(".ydr").Exists(n => n.StartsWith(WP + "walls")); k++) WP = P.TrimEnd('_') + k + "_";
+
+            // the game's models that were changed (cut, faces taken out, new textures): each under a name of its own, for the project's objects only
+            List<ModelOut> models = ExportModels(J.O(J.G(game, "mods")), J.A(J.G(game, "modTextures")), P, stream, cacheDir, log, warns);
+            Dictionary<string, string> rename = new Dictionary<string, string>(); foreach (ModelOut mo in models) { rename[mo.Old] = mo.New; files.Add("stream/" + mo.New + ".ydr"); }
+
+            // new rooms (after the game's) and portals
+            int nRooms = roomsEl == null ? 0 : roomsEl.SelectNodes("Item").Count; List<string> roomNames = new List<string>();
+            if (roomsEl != null) foreach (XmlNode r in roomsEl.SelectNodes("Item")) { XmlNode nn = r.SelectSingleNode("name"); roomNames.Add(nn == null ? "" : nn.InnerText); }
+            List<object> gRooms = J.A(J.G(game, "rooms")); int gameRooms = nRooms;
+            for (int r = nRooms; r < gRooms.Count; r++) { Dictionary<string, object> rd0 = J.O(gRooms[r]); if (rd0 != null && J.B(J.G(rd0, "new"), false)) roomNames.Add(J.S(J.G(rd0, "name"), "room " + r)); }
+            nRooms = roomNames.Count;
             List<XmlNode> newBase = new List<XmlNode>(); List<int>[] roomObjs = new List<int>[nRooms]; for (int r = 0; r < nRooms; r++) roomObjs[r] = new List<int>();
             Dictionary<int, int> remap = new Dictionary<int, int>();            // a base object's old index -> its new one
             List<XmlNode>[] setEnts = new List<XmlNode>[setNodes.Count]; List<int>[] setLocs = new List<int>[setNodes.Count]; for (int s = 0; s < setNodes.Count; s++) { setEnts[s] = new List<XmlNode>(); setLocs[s] = new List<int>(); }
             HashSet<int> used = new HashSet<int>(); int moved = 0, added = 0, deleted = 0; List<string> addedNames = new List<string>();
+            List<CutBox> removedInt = new List<CutBox>();                         // where removed or moved objects stood whose collision is in the interior's files
             foreach (object o in ents)
             {
                 Dictionary<string, object> e = J.O(o); if (e == null) continue;
+                if (J.G(e, "ext") != null) continue;                                    // (an object of the building outside: its map file is written below)
                 int oi = J.I(J.G(e, "o"), -1), room = J.I(J.G(e, "room"), -1), set = J.I(J.G(e, "set"), -1);
-                if (J.B(J.G(e, "del"), false)) { if (oi >= 0) deleted++; continue; }
+                if (J.B(J.G(e, "del"), false)) { if (oi >= 0) { deleted++; if (oi < orig.Count && !J.B(J.G(e, "dup"), false)) { CutBox rb = RemovalBoxAt(orig[oi]); if (rb != null) removedInt.Add(rb); } } continue; }
                 XmlNode node;
                 if (oi >= 0 && oi < orig.Count)
                 {
                     node = orig[oi].CloneNode(true);
                     if (!used.Add(oi)) { SetVal(node, "guid", "0"); added++; }   // (a copy of an object)
-                    else if (J.B(J.G(e, "ch"), false)) moved++;
+                    else if (J.B(J.G(e, "ch"), false))
+                    {
+                        moved++;
+                        // moved or turned: its collision (when it is in the interior's files) stays where it stood, so it is cut away there
+                        double[] was = PlaceOf(orig[oi]); List<object> np = J.A(J.G(e, "p")), nq = J.A(J.G(e, "q"));
+                        double dp = Math.Abs(was[0] - J.D(np[0], 0)) + Math.Abs(was[1] - J.D(np[1], 0)) + Math.Abs(was[2] - J.D(np[2], 0)), dq = Math.Abs(Math.Abs(was[3] * J.D(nq[0], 0) + was[4] * J.D(nq[1], 0) + was[5] * J.D(nq[2], 0) + was[6] * J.D(nq[3], 1)) - 1);
+                        if (dp > 0.05 || dq > 0.0005) { CutBox rb = RemovalBoxAt(orig[oi]); if (rb != null) removedInt.Add(rb); }
+                    }
                 }
                 else { node = NewEntity(doc, J.S(J.G(e, "n"), "")); added++; addedNames.Add(J.S(J.G(e, "n"), "")); }
+                string nm; if (rename.TryGetValue(J.S(J.G(e, "n"), "").ToLowerInvariant(), out nm)) { XmlNode an = node.SelectSingleNode("archetypeName"); if (an != null) an.InnerText = nm; }       // (its changed model)
                 List<object> p = J.A(J.G(e, "p")), q = J.A(J.G(e, "q")), sc = J.A(J.G(e, "s"));
                 SetXyz(node, "position", J.D(p[0], 0), J.D(p[1], 0), J.D(p[2], 0));
                 XmlElement rot = node.SelectSingleNode("rotation") as XmlElement;                // stored as the inverse of the real turn
@@ -412,10 +487,65 @@ namespace MloCreator
                 int ni = newBase.Count; newBase.Add(node); if (oi >= 0 && oi < baseCount && !remap.ContainsKey(oi)) remap[oi] = ni;
                 if (room >= 0 && room < nRooms) roomObjs[room].Add(ni);
             }
+            // new walls: a model per room, defined in this file and placed in its room at the interior's origin (their points are in the interior's frame)
+            List<object> wallGroups = J.A(J.G(game, "wallGroups")); List<Exporter.WallModel> walls = new List<Exporter.WallModel>();
+            if (wallGroups.Count > 0)
+            {
+                string work = Path.Combine(cacheDir, "walls_work"); if (Directory.Exists(work)) Directory.Delete(work, true); Directory.CreateDirectory(work);
+                List<string> wfiles = new List<string>();
+                Exporter.SetAmbient(J.S(J.G(game, "ambient"), "normal"));
+                walls = Exporter.GameWalls(wallGroups, J.A(J.G(game, "wallTextures")), WP, stream, work, wfiles, log);
+                foreach (string wf in wfiles) files.Add("stream/" + wf.Split(' ')[0]);
+                XmlNode archsEl = doc.SelectSingleNode("/CMapTypes/archetypes");
+                foreach (Exporter.WallModel wm in walls)
+                {
+                    XmlDocumentFragment af = doc.CreateDocumentFragment(); af.InnerXml = wm.ArchXml;
+                    foreach (XmlNode an in af.ChildNodes) if (an.NodeType == XmlNodeType.Element) { archsEl.AppendChild(an); break; }        // (only the element: CodeWalker reads every child of an array as an item)
+                    int ni = newBase.Count; newBase.Add(NewEntity(doc, wm.Name)); if (wm.Room >= 0 && wm.Room < nRooms) roomObjs[wm.Room].Add(ni);
+                }
+            }
+
             // write them in
             if (entsEl != null) { Clear(entsEl); foreach (XmlNode n in newBase) entsEl.AppendChild(n); }
             int ri = 0;
             if (roomsEl != null) foreach (XmlNode r in roomsEl.SelectNodes("Item")) { SetList(r, "attachedObjects", roomObjs[ri]); ri++; }
+            // new rooms: a copy of a room of the game (its time cycle and settings) with the new one's name, box and objects
+            int newRooms = 0, newPortals = 0;
+            if (roomsEl != null && nRooms > gameRooms)
+            {
+                XmlNode tmpl = null; foreach (XmlNode r in roomsEl.SelectNodes("Item")) { XmlNode nn = r.SelectSingleNode("name"); if (tmpl == null || (nn != null && !Regex.IsMatch(nn.InnerText, "limbo", RegexOptions.IgnoreCase) && Regex.IsMatch(tmpl.SelectSingleNode("name").InnerText, "limbo", RegexOptions.IgnoreCase))) tmpl = r; }
+                int k = gameRooms;
+                for (int r = gameRooms; r < gRooms.Count && k < nRooms; r++)
+                {
+                    Dictionary<string, object> rd0 = J.O(gRooms[r]); if (rd0 == null || !J.B(J.G(rd0, "new"), false)) continue;
+                    XmlNode nr = tmpl.CloneNode(true); XmlNode nn = nr.SelectSingleNode("name"); if (nn != null) nn.InnerText = Regex.Replace(J.S(J.G(rd0, "name"), "room"), "[^A-Za-z0-9_]", "_");
+                    List<object> a = J.A(J.G(rd0, "mn")), b = J.A(J.G(rd0, "mx"));
+                    SetXyz(nr, "bbMin", J.D(a[0], 0), J.D(a[1], 0), J.D(a[2], 0)); SetXyz(nr, "bbMax", J.D(b[0], 0), J.D(b[1], 0), J.D(b[2], 0));
+                    SetList(nr, "attachedObjects", roomObjs[k]); roomsEl.AppendChild(nr); k++; newRooms++;
+                }
+            }
+            // new portals: four corners and the rooms on either side (a copy of a portal of the game for the rest of its fields)
+            if (portalsEl != null)
+            {
+                XmlNode ptmpl = portalsEl.SelectSingleNode("Item");
+                foreach (object po in J.A(J.G(game, "portals")))
+                {
+                    Dictionary<string, object> pd = J.O(po); if (pd == null || !J.B(J.G(pd, "new"), false)) continue;
+                    XmlNode np;
+                    if (ptmpl != null) np = ptmpl.CloneNode(true);
+                    else { XmlDocumentFragment f = doc.CreateDocumentFragment(); f.InnerXml = "<Item><roomFrom value=\"0\" /><roomTo value=\"0\" /><flags value=\"0\" /><mirrorPriority value=\"0\" /><opacity value=\"0\" /><audioOcclusion value=\"0\" /><corners /><attachedObjects /></Item>"; np = f.FirstChild; }
+                    SetVal(np, "roomFrom", J.I(J.G(pd, "from"), 0).ToString(IC)); SetVal(np, "roomTo", J.I(J.G(pd, "to"), 0).ToString(IC)); SetVal(np, "flags", "0"); SetVal(np, "mirrorPriority", "0"); SetVal(np, "opacity", "0"); SetVal(np, "audioOcclusion", "0");
+                    XmlNode cs = np.SelectSingleNode("corners"); Clear(cs);
+                    foreach (object co in J.A(J.G(pd, "corners"))) { List<object> c3 = J.A(co); XmlElement ci = doc.CreateElement("Item"); ci.InnerText = F(J.D(c3[0], 0)) + ", " + F(J.D(c3[1], 0)) + ", " + F(J.D(c3[2], 0)) + ", 0"; cs.AppendChild(ci); }
+                    SetList(np, "attachedObjects", new List<int>()); portalsEl.AppendChild(np); newPortals++;
+                }
+                // every room's count of portals, from the portals as they are now
+                if (newPortals > 0 && roomsEl != null)
+                {
+                    int[] cnt = new int[nRooms]; foreach (XmlNode pt in portalsEl.SelectNodes("Item")) foreach (string fld in new string[] { "roomFrom", "roomTo" }) { XmlElement fe2 = pt.SelectSingleNode(fld) as XmlElement; int v; if (fe2 != null && int.TryParse(fe2.GetAttribute("value"), out v) && v >= 0 && v < nRooms) cnt[v]++; }
+                    int i2 = 0; foreach (XmlNode r in roomsEl.SelectNodes("Item")) { if (i2 < nRooms) SetVal(r, "portalCount", cnt[i2].ToString(IC)); i2++; }
+                }
+            }
             if (portalsEl != null)
                 foreach (XmlNode pt in portalsEl.SelectNodes("Item"))
                 {
@@ -437,12 +567,36 @@ namespace MloCreator
             if (chk.AllArchetypes != null) foreach (Archetype a in chk.AllArchetypes) { MloArchetype m = a as MloArchetype; if (m != null && m.Hash.Hash == hash) got = m.entities != null ? m.entities.Length : 0; }
             if (got != newBase.Count) throw new Exception("The written map types file has " + got + " objects in the interior instead of " + newBase.Count + "; nothing was exported.");
 
-            string res = Regex.Replace((resource ?? "").ToLowerInvariant(), "[^a-z0-9_\\-]", "_").Trim('_'); if (res.Length == 0) res = "mlo_" + Regex.Replace(mloName.ToLowerInvariant(), "[^a-z0-9_]", "_") + "_edit";
-            string dir = Path.Combine(outRoot, res), stream = Path.Combine(dir, "stream");
-            if (Directory.Exists(stream)) foreach (string old in Directory.GetFiles(stream)) File.Delete(old);           // (a file left from an earlier export would be streamed too)
-            Directory.CreateDirectory(stream);
-            File.WriteAllBytes(Path.Combine(stream, ytyp), data); files.Add("stream/" + ytyp);
-            log.Add(ytyp + ": " + newBase.Count + " objects in the interior (was " + baseCount + "), " + moved + " moved or turned, " + deleted + " deleted, " + added + " added");
+            files.Insert(0, Write(stream, ytyp, data));
+            // the building round the interior: the map files of its changed objects
+            List<CutBox> removedMap = new List<CutBox>();
+            List<string> outside = ExportOutside(ents, J.O(J.G(game, "world")), stream, log, warns, rename, removedMap); files.AddRange(outside);
+            // the changed models' map types file, and the collision their openings cut (the interior's own files and the map's round it)
+            if (models.Count > 0) files.Add(Write(stream, P + "models.ytyp", ModelsYtyp(P, models)));
+            // the user's own props among the objects (the props folder): their files and a map types file that defines them
+            List<string> myArchs = new List<string>(); HashSet<string> myDone = new HashSet<string>();
+            foreach (object o in ents)
+            {
+                Dictionary<string, object> e = J.O(o); if (e == null || J.B(J.G(e, "del"), false)) continue; string n = J.S(J.G(e, "n"), "").ToLowerInvariant();
+                if (!Vanilla.IsLibrary(n) || !myDone.Add(n)) continue; string a = Exporter.MyPropArch(n, stream, files, log, warns); if (a != null) myArchs.Add(a);
+            }
+            string myYtyp = myArchs.Count > 0 ? Write(stream, P + "myprops.ytyp", Exporter.MyPropsYtyp(P + "myprops", myArchs)) : null; if (myYtyp != null) files.Add(myYtyp);
+            // props of a later DLC than the server's game build do not show on it
+            int sb = Vanilla.ServerBuild(own ? dir : outRoot);
+            if (sb > 0) { HashSet<string> told = new HashSet<string>(); foreach (object o in ents) { Dictionary<string, object> e = J.O(o); if (e == null || J.B(J.G(e, "del"), false)) continue; string n = J.S(J.G(e, "n"), "").ToLowerInvariant(); int need; string pack = Vanilla.DlcOf(n, out need); if (need > sb && told.Add(n)) warns.Add(n + " comes from the DLC " + pack + " and needs game build " + (need > 9000 ? "newer than 3889" : need.ToString()) + "; your server runs " + sb + " (sv_enforceGameBuild in server.cfg): it does not show there."); } }
+            // Collision for the objects that stand somewhere new (added, copied, moved or turned) and carry none of their own (a counter, shelves, a kitchen: their
+            // collision is in the files of the interior or the map they come from): the model's box where each one stands now, 2 cm smaller on the sides and
+            // 2 cm higher at the bottom, in a collision file of the resource (in the world)
+            List<double[]> propCol = PropCollision(ents, J.O(J.G(game, "world")));
+            if (propCol.Count > 0) { files.Add(Write(stream, P + "propcol.ybn", Exporter.BoxesYbn(propCol))); log.Add(P + "propcol.ybn: collision for " + propCol.Count + " object(s) without collision of their own where they stand now"); }
+            List<CutBox> colBoxes = OpeningBoxes(ents, J.O(J.G(game, "mods")));
+            HashSet<string> prefixes = new HashSet<string>();
+            foreach (object o in J.A(J.G(game, "ymaps"))) prefixes.Add(MapPrefix(J.S(o, "")));
+            foreach (object o in ents) { Dictionary<string, object> e = J.O(o); if (e == null) continue; foreach (object fo in J.A(J.G(e, "ext"))) prefixes.Add(MapPrefix(J.S(J.G(J.O(fo), "y"), ""))); }
+            prefixes.Remove("");
+            if (removedInt.Count + removedMap.Count > 0) log.Add((removedInt.Count + removedMap.Count) + " removed or moved object(s) whose collision is not their own: it is cut away where they stood");
+            List<string> colFiles = CutCollision(colBoxes, removedInt, removedMap, J.O(J.G(game, "world")), mloName, J.S(J.G(game, "twin"), "").Split(',')[0].Trim(), prefixes, stream, log, warns); files.AddRange(colFiles);
+            log.Insert(0, ytyp + ": " + newBase.Count + " objects in the interior (was " + baseCount + "), " + moved + " moved or turned, " + deleted + " deleted, " + added + " added" + (walls.Count > 0 ? ", new walls in " + walls.Count + " room" + (walls.Count == 1 ? "" : "s") : ""));
 
             // props of the game's own interiors among the new ones: their map types files go along (the game only loads them with that interior)
             Dictionary<string, List<string>> ityps = Vanilla.InteriorYtypsFor(addedNames);
@@ -450,16 +604,38 @@ namespace MloCreator
             foreach (string yx in ityps.Keys) { byte[] b = Vanilla.ResourceFile(yx); if (b == null) { warns.Add(yx + " could not be read from the game."); continue; } File.WriteAllBytes(Path.Combine(stream, yx), b); files.Add("stream/" + yx); }
 
             string twin = J.S(J.G(game, "twin"), "");
+            if (own)
+            {
+                // the resource's own manifest and readme stay; the manifest gets the lines the added files need
+                List<string> need = new List<string>();
+                foreach (string yx in ityps.Keys) need.Add("data_file 'DLC_ITYP_REQUEST' 'stream/" + yx + "'");
+                if (models.Count > 0) need.Add("data_file 'DLC_ITYP_REQUEST' '" + files.Find(f => f.EndsWith(P + "models.ytyp")) + "'");
+                if (myYtyp != null) need.Add("data_file 'DLC_ITYP_REQUEST' '" + myYtyp + "'");
+                AddToManifest(dir, need, log);
+                RememberMade(dir, snap, before);
+                Dictionary<string, object> r1 = new Dictionary<string, object>();
+                r1["ok"] = true; r1["dir"] = dir; r1["resource"] = res; r1["files"] = files; r1["log"] = log; r1["warnings"] = warns; r1["objects"] = newBase.Count; r1["moved"] = moved; r1["deleted"] = deleted; r1["added"] = added; r1["backup"] = zip; r1["own"] = true;
+                return r1;
+            }
             StringBuilder fx = new StringBuilder("fx_version 'cerulean'\ngame 'gta5'\nlua54 'yes'\nthis_is_a_map 'yes'\n\nauthor 'MLO Creator'\ndescription '" + (mloName + " edited").Replace("'", "") + "'\nversion '1.0.0'\n\n");
             fx.Append("-- stream/" + ytyp + " replaces the game's file of the same name: the interior " + mloName + " with your changes\n");
             if (ityps.Count > 0) { fx.Append("-- the game's own map types files of props added from other interiors\n"); foreach (string yx in ityps.Keys) fx.Append("data_file 'DLC_ITYP_REQUEST' 'stream/" + yx + "'\n"); }
+            if (models.Count > 0) fx.Append("-- the game's models changed in MLO Creator, under names of their own\ndata_file 'DLC_ITYP_REQUEST' 'stream/" + P + "models.ytyp'\n");
+            if (myYtyp != null) fx.Append("-- your own props (the props folder of MLO Creator)\ndata_file 'DLC_ITYP_REQUEST' '" + myYtyp + "'\n");
             File.WriteAllText(Path.Combine(dir, "fxmanifest.lua"), fx.ToString(), new UTF8Encoding(false)); files.Add("fxmanifest.lua");
 
             Dictionary<string, object> w = J.O(J.G(game, "world"));
             StringBuilder rd = new StringBuilder("# " + res + "\n\nThe game's interior **" + mloName + "**" + (J.S(J.G(game, "place"), "") != "" ? " (" + J.S(J.G(game, "place"), "") + ")" : "") + " with changes made in MLO Creator.\n\n");
-            rd.Append("- Objects in the interior: " + newBase.Count + " (the game has " + baseCount + ")\n- Moved or turned: " + moved + "\n- Deleted: " + deleted + "\n- Added: " + added + (added > 0 ? " (" + string.Join(", ", addedNames.ToArray()) + ")" : "") + "\n\n");
+            rd.Append("- Objects in the interior: " + newBase.Count + " (the game has " + baseCount + ")\n- Moved or turned: " + moved + "\n- Deleted: " + deleted + "\n- Added: " + added + (added > 0 ? " (" + string.Join(", ", addedNames.ToArray()) + ")" : "") + "\n");
+            foreach (Exporter.WallModel wm in walls) rd.Append("- New walls in " + (wm.Room >= 0 && wm.Room < roomNames.Count ? roomNames[wm.Room] : "room " + wm.Room) + ": `" + wm.Name + "` (" + wm.Tris + " triangles, " + wm.Boxes + " collision boxes built into the model)\n");
+            rd.Append("\n");
             rd.Append("## Install\n\nCopy the folder `" + res + "` into your server's `resources` and add `ensure " + res + "` to `server.cfg`. Restart the server (a map file is not reloaded while the server runs).\n\n");
             rd.Append("## Files\n\n- `stream/" + ytyp + "` replaces the game's file of that name. Only one resource can replace it: another MLO edit or interior mod that ships the same file conflicts with this one.\n");
+            if (walls.Count > 0) rd.Append("- `stream/*walls*.ydr`, `stream/*tex.ytd`: the new walls and their textures (defined in the file above)\n");
+            foreach (ModelOut mo in models) rd.Append("- `stream/" + mo.New + ".ydr`: the game's `" + mo.Old + "` with " + mo.Cuts + " opening(s), " + mo.Deleted + " face(s) taken out" + (mo.Retextured > 0 ? " and new textures" : "") + "; only the objects of this interior (and of its building) use it, defined in `stream/" + P + "models.ytyp`\n");
+            if (newRooms + newPortals > 0) rd.Append("- New rooms: " + newRooms + ", new portals: " + newPortals + " (in `stream/" + ytyp + "`)\n");
+            foreach (string cf in colFiles) rd.Append("- `" + cf + "` replaces the game's collision file of that name: the openings cut through it\n");
+            foreach (string of in outside) rd.Append("- `" + of + "` replaces the game's map file of that name: objects of the building round the interior moved, turned, copied or deleted. Another map mod that changes the same file conflicts with this one.\n");
             foreach (string yx in ityps.Keys) rd.Append("- `stream/" + yx + "`: the game's own file, unchanged, for " + string.Join(", ", ityps[yx].ToArray()) + "\n");
             if (w != null) rd.Append("\n## Test\n\nThe interior stands at " + F(J.D(J.G(w, "x"), 0)) + ", " + F(J.D(J.G(w, "y"), 0)) + ", " + F(J.D(J.G(w, "z"), 0)) + ". Teleport there and look at the changes; the game has to be restarted (or the client reconnected) to read the file again.\n");
             if (twin.Length > 0) rd.Append("\n**Note:** the game places a second interior at the same spot (`" + twin + "`). Only one of the two shows in the game, usually the DLC one; if your changes do not show, open that one in MLO Creator and make them there.\n");
@@ -471,6 +647,31 @@ namespace MloCreator
             return r0;
         }
         static string F(double v) { return v.ToString("0.######", IC); }
+        static List<double[]> PropCollision(List<object> ents, Dictionary<string, object> world)
+        {
+            List<double[]> res = new List<double[]>(); if (world == null) return res;
+            double wx = J.D(J.G(world, "x"), 0), wy = J.D(J.G(world, "y"), 0), wz = J.D(J.G(world, "z"), 0), hw = J.D(J.G(world, "heading"), 0) * Math.PI / 180, c = Math.Cos(hw), s = Math.Sin(hw);
+            Quaternion qh = Quaternion.RotationAxis(Vector3.UnitZ, (float)hw);
+            foreach (object o in ents)
+            {
+                Dictionary<string, object> e = J.O(o); if (e == null || J.B(J.G(e, "del"), false)) continue;
+                bool fresh = J.I(J.G(e, "o"), -1) < 0 || J.B(J.G(e, "dup"), false) || J.B(J.G(e, "ch"), false); if (!fresh) continue;
+                string n = J.S(J.G(e, "n"), "").ToLowerInvariant(); if (n.Length == 0 || n.StartsWith("hash_") || n.StartsWith("0x") || Vanilla.HasOwnCollision(n)) continue;
+                Vector3[] bb = Vanilla.PropBox(n); if (bb == null || bb[1].X - bb[0].X > 15 || bb[1].Y - bb[0].Y > 15) continue;          // (a piece of the building bigger than 15 m has its collision in the map's files)
+                List<double[]> shape = Vanilla.PropCollisionBoxes(n); if (shape == null) continue;
+                List<object> p = J.A(J.G(e, "p")), q = J.A(J.G(e, "q")), sc = J.A(J.G(e, "s")); if (p.Count < 3 || q.Count < 4) continue;
+                double sxy = sc.Count > 0 ? J.D(sc[0], 1) : 1, sz = sc.Count > 1 ? J.D(sc[1], 1) : 1;
+                Quaternion qe = new Quaternion((float)J.D(q[0], 0), (float)J.D(q[1], 0), (float)J.D(q[2], 0), (float)J.D(q[3], 1)); qe.Normalize();
+                Vector3 xa = Vector3.Transform(Vector3.UnitX, qh * qe); double yaw = Math.Atan2(xa.Y, xa.X);
+                foreach (double[] b in shape)
+                {
+                    Vector3 mid = Vector3.Transform(new Vector3((float)(b[0] * sxy), (float)(b[1] * sxy), (float)(b[2] * sz)), qe);
+                    double lx = J.D(p[0], 0) + mid.X, ly = J.D(p[1], 0) + mid.Y, lz = J.D(p[2], 0) + mid.Z;
+                    res.Add(new double[] { wx + lx * c - ly * s, wy + lx * s + ly * c, wz + lz, b[3] * sxy, b[4] * sxy, b[5] * sz, yaw, 70 });
+                }
+            }
+            return res;
+        }
         static void Clear(XmlNode n) { while (n.HasChildNodes) n.RemoveChild(n.FirstChild); }          // (the element's own attributes stay)
         static void SetVal(XmlNode n, string tag, string v) { XmlElement e = n.SelectSingleNode(tag) as XmlElement; if (e != null) e.SetAttribute("value", v); }
         static void SetXyz(XmlNode n, string tag, double x, double y, double z) { XmlElement e = n.SelectSingleNode(tag) as XmlElement; if (e == null) return; e.SetAttribute("x", F(x)); e.SetAttribute("y", F(y)); e.SetAttribute("z", F(z)); }

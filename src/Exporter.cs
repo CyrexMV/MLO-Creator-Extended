@@ -9,6 +9,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
 using CodeWalker.GameFiles;
+using SharpDX;
 
 namespace MloCreator
 {
@@ -98,6 +99,21 @@ namespace MloCreator
                 }
         }
 
+        // How much light the walls, floors and ceilings take from the game besides the lamps: the vertex colour's red is the light of the sky (through the
+        // windows, by day), its green the artificial light of the interior (the game's ambient light, also at night). White in both made rooms glow at night.
+        // ambient: "full" (255, 255: as before), "bright", "normal" (the default), "dim", "dark" (lit by its lamps only).
+        static string vertexLight = "150 110 255 255";
+        public static void SetAmbient(string ambient)
+        {
+            switch ((ambient ?? "").ToLowerInvariant())
+            {
+                case "full": vertexLight = "255 255 255 255"; break;
+                case "bright": vertexLight = "210 190 255 255"; break;
+                case "dim": vertexLight = "110 60 255 255"; break;
+                case "dark": vertexLight = "70 20 255 255"; break;
+                default: vertexLight = "150 110 255 255"; break;
+            }
+        }
         static string DrawableXml(string name, GroupData g, string px)
         {
             V3 mn, mx; Bounds(g, out mn, out mx);
@@ -169,7 +185,7 @@ namespace MloCreator
                 for (int i = 0; i < nv; i++)
                 {
                     double nx = m.Nrm[i * 3], ny = m.Nrm[i * 3 + 1], nz = m.Nrm[i * 3 + 2];
-                    string line = "       " + F(m.Pos[i * 3]) + " " + F(m.Pos[i * 3 + 1]) + " " + F(m.Pos[i * 3 + 2]) + "   " + F(nx) + " " + F(ny) + " " + F(nz) + "   255 255 255 255   " + F(m.Uv[i * 2]) + " " + F(m.Uv[i * 2 + 1]);
+                    string line = "       " + F(m.Pos[i * 3]) + " " + F(m.Pos[i * 3 + 1]) + " " + F(m.Pos[i * 3 + 2]) + "   " + F(nx) + " " + F(ny) + " " + F(nz) + "   " + vertexLight + "   " + F(m.Uv[i * 2]) + " " + F(m.Uv[i * 2 + 1]);
                     if (m.Glass)
                     {
                         // tangent = up x normal
@@ -275,7 +291,7 @@ namespace MloCreator
             return pad + "<Item type=\"CEntityDef\">\n" + pad + " <archetypeName>" + arch + "</archetypeName>\n" + pad + " <flags value=\"1572864\" />\n" + pad + " <guid value=\"0\" />\n" + pad + " <position x=\"" + F(x) + "\" y=\"" + F(y) + "\" z=\"" + F(z) + "\" />\n" + pad + " <rotation x=\"0\" y=\"0\" z=\"" + F(Math.Sin(r)) + "\" w=\"" + F(Math.Cos(r)) + "\" />\n" + pad + " <scaleXY value=\"" + F(scaleXY) + "\" />\n" + pad + " <scaleZ value=\"" + F(scaleZ) + "\" />\n" + pad + " <parentIndex value=\"-1\" />\n" + pad + " <lodDist value=\"-1\" />\n" + pad + " <childLodDist value=\"0\" />\n" + pad + " <lodLevel>LODTYPES_DEPTH_ORPHANHD</lodLevel>\n" + pad + " <numChildren value=\"0\" />\n" + pad + " <priorityLevel>PRI_REQUIRED</priorityLevel>\n" + pad + " <extensions />\n" + pad + " <ambientOcclusionMultiplier value=\"255\" />\n" + pad + " <artificialAmbientOcclusion value=\"255\" />\n" + pad + " <tintValue value=\"0\" />\n" + pad + "</Item>\n";
         }
 
-        static string YtypXml(string P, string mlo, string txd, List<GroupData> groups, List<PortalData> portals, V3 bmn, V3 bmx, string timecycle, List<DoorData> doors, string doorArch)
+        static string YtypXml(string P, string mlo, string txd, List<GroupData> groups, List<PortalData> portals, V3 bmn, V3 bmx, string timecycle, List<DoorData> doors, string doorArch, string propArch)
         {
             StringBuilder s = new StringBuilder();
             s.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<CMapTypes>\n <extensions />\n <archetypes>");
@@ -284,6 +300,7 @@ namespace MloCreator
                 V3 mn, mx; Bounds(g, out mn, out mx);
                 s.Append(DrawableArch(P + g.Name, txd, g.Lod, mn, mx));
             }
+            if (propArch != null) s.Append(propArch);
             if (doorArch != null) s.Append(doorArch);
             V3 bc = (bmn + bmx) * 0.5; double br = (bmx - bmn).Len() * 0.5;
             s.AppendLine("  <Item type=\"CMloArchetypeDef\">\n   <lodDist value=\"300\" />\n   <flags value=\"0\" />\n   <specialAttribute value=\"0\" />");
@@ -360,7 +377,7 @@ namespace MloCreator
             string P = Safe(J.S(J.G(model, "prefix"), ""), "mlo1", 10) + "_";
             if (P.EndsWith("__")) P = P.TrimEnd('_') + "_";
             string label = J.S(J.G(model, "label"), P);
-            string timecycle = J.S(J.G(model, "timecycle"), "hash_E83C53FC");
+            string timecycle = J.S(J.G(model, "timecycle"), "hash_E83C53FC"); SetAmbient(J.S(J.G(model, "ambient"), "normal"));
             string mlo = P + "mlo", txd = P + "tex";
             {
                 // ---- parse groups ----
@@ -547,8 +564,67 @@ namespace MloCreator
                     DoorData d = new DoorData(); d.Name = fname; d.X = J.D(J.G(fo, "x"), 0); d.Y = J.D(J.G(fo, "y"), 0); d.Z = J.D(J.G(fo, "z"), 0); d.Heading = J.D(J.G(fo, "heading"), 0); ents.Add(d);
                 }
                 if (ents.Count > doors.Count) log.Add("furniture: " + (ents.Count - doors.Count) + " props of the game placed in the rooms");
+                Dictionary<string, string> scaledDoors = new Dictionary<string, string>(); string scaledArch = null;
+                // the game's own doors, gates, garage doors and windows placed in the openings (gameDoors: name, x, y, z of the model's origin, heading, mode):
+                // objects of the room like the game's own; a door or a gate the game moves swings when pushed, a garage door goes up by client/doors.lua
+                foreach (object o in J.A(J.G(model, "gameDoors")))
+                {
+                    Dictionary<string, object> go = J.O(o); string gname = Safe(J.S(J.G(go, "name"), ""), "", 64); if (gname.Length == 0) continue;
+                    double gsx = J.D(J.G(go, "sx"), 1), gsy = J.D(J.G(go, "sy"), 1), gsz = J.D(J.G(go, "sz"), 1);
+                    if (Math.Abs(gsx - 1) > 0.005 || Math.Abs(gsy - 1) > 0.005 || Math.Abs(gsz - 1) > 0.005)
+                    {
+                        // sized in the editor: a copy of the model at that size, under a name of its own (one per size)
+                        string sk = gname + "|" + gsx.ToString("0.###", CultureInfo.InvariantCulture) + "|" + gsy.ToString("0.###", CultureInfo.InvariantCulture) + "|" + gsz.ToString("0.###", CultureInfo.InvariantCulture), scn;
+                        if (!scaledDoors.TryGetValue(sk, out scn))
+                        {
+                            string nn = P + "s" + scaledDoors.Count + "_" + gname; if (nn.Length > 60) nn = nn.Substring(0, 60);
+                            Vanilla.Init(GtaPath, CacheDir); Buildings.ModelOut smo = Buildings.ScaledModel(gname, gsx, gsy, gsz, nn, stream, CacheDir, log, warns);
+                            scn = smo != null ? smo.New : gname; scaledDoors[sk] = scn;
+                            if (smo != null) { scaledArch = (scaledArch ?? "") + smo.Arch; files.Add(smo.New + ".ydr"); }
+                        }
+                        gname = scn;
+                    }
+                    DoorData d = new DoorData(); d.Name = gname; d.X = J.D(J.G(go, "x"), 0); d.Y = J.D(J.G(go, "y"), 0); d.Z = J.D(J.G(go, "z"), 0); d.Heading = J.D(J.G(go, "heading"), 0); ents.Add(d);
+                    string mode = J.S(J.G(go, "mode"), "swing"); double gh = J.D(J.G(go, "h"), 2.4);
+                    double wx = px + d.X * wcs - d.Y * wsn, wy = py + d.X * wsn + d.Y * wcs, wz = pz + d.Z, wa = d.Heading * Math.PI / 180 + wrad;
+                    if (mode == "roll" || mode == "lift")
+                    {
+                        doorScript.Add("    { model = '" + gname + "', x = " + F(Math.Round(wx, 3)) + ", y = " + F(Math.Round(wy, 3)) + ", z = " + F(Math.Round(wz, 3)) + ", ux = " + F(Math.Round(Math.Cos(wa), 5)) + ", uy = " + F(Math.Round(Math.Sin(wa), 5)) + ", cu = 0, mode = 'roll', dir = 1, dist = 0, h = " + F(Math.Round(gh, 3)) + ", s = 1 },");
+                        doorLines.Add("`" + gname + "` (the game's garage door) at " + F(Math.Round(wx, 3)) + ", " + F(Math.Round(wy, 3)) + ", " + F(Math.Round(wz, 3)) + ": client/doors.lua moves it up when someone comes near");
+                    }
+                    else if (Vanilla.IsWorkingDoor(gname)) doorLines.Add("`" + gname + "` (the game's door) at " + F(Math.Round(wx, 3)) + ", " + F(Math.Round(wy, 3)) + ", " + F(Math.Round(wz, 3)) + ": it swings when pushed (or your door script moves it)");
+                    log.Add("the game's " + gname + " in an opening" + (mode == "roll" || mode == "lift" ? ", moved up by client/doors.lua" : ""));
+                }
+                // props of a later DLC than the server's game build do not show on it
+                int sb = Vanilla.ServerBuild(outRoot); if (sb > 0) { HashSet<string> told = new HashSet<string>(); foreach (DoorData d in ents) { int need; string pack = Vanilla.DlcOf(d.Name, out need); if (need > sb && told.Add(d.Name)) warns.Add(d.Name + " comes from the DLC " + pack + " and needs game build " + (need > 9000 ? "newer than 3889" : need.ToString()) + "; your server runs " + sb + " (sv_enforceGameBuild in server.cfg): it does not show there."); } }
 
-                XmlDocument ytypDoc = new XmlDocument(); ytypDoc.LoadXml(YtypXml(P, mlo, txd, groups, portals, bmn, bmx, timecycle, ents, doorArch));
+                // the furniture whose lights were changed (model: propLights { model: { light: ... } }): each such model under a name of its own (Buildings.ExportModels),
+                // defined in this map types file, and the furniture pointed at it
+                string propArch = scaledArch;
+                Dictionary<string, object> plm = J.O(J.G(model, "propLights"));
+                if (plm != null && plm.Count > 0)
+                {
+                    Dictionary<string, object> mods = new Dictionary<string, object>(); HashSet<string> placed = new HashSet<string>(StringComparer.OrdinalIgnoreCase); foreach (DoorData d in ents) placed.Add(d.Name);
+                    foreach (KeyValuePair<string, object> kv in plm) if (placed.Contains(kv.Key) && J.O(kv.Value) != null && J.O(kv.Value).Count > 0) mods[kv.Key] = new Dictionary<string, object> { { "lights", kv.Value } };
+                    if (mods.Count > 0)
+                    {
+                        Vanilla.Init(GtaPath, CacheDir);
+                        foreach (Buildings.ModelOut mo in Buildings.ExportModels(mods, new List<object>(), P, stream, CacheDir, log, warns))
+                        {
+                            propArch = (propArch ?? "") + mo.Arch; files.Add(mo.New + ".ydr");
+                            foreach (DoorData d in ents) if (d.Name.Equals(mo.Old, StringComparison.OrdinalIgnoreCase)) d.Name = mo.New;
+                        }
+                    }
+                }
+                HashSet<string> propNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (DoorData d in ents)
+                {
+                    if (string.IsNullOrEmpty(d.Name) || !Vanilla.IsLibrary(d.Name) || !propNames.Add(d.Name)) continue;
+                    List<string> pf = new List<string>(); string a = MyPropArch(d.Name, stream, pf, log, warns); if (a == null) continue;
+                    propArch = (propArch ?? "") + a; foreach (string f in pf) files.Add(f.Substring(7));
+                }
+
+                XmlDocument ytypDoc = new XmlDocument(); ytypDoc.LoadXml(YtypXml(P, mlo, txd, groups, portals, bmn, bmx, timecycle, ents, doorArch, propArch));
                 total += Save(Path.Combine(stream, P + "types.ytyp"), XmlMeta.GetRSCData(ytypDoc), files);
                 log.Add("portals: " + portals.Count);
 
@@ -634,7 +710,7 @@ namespace MloCreator
                 List<string> ityps = new List<string>(); Dictionary<string, List<string>> itypProps = new Dictionary<string, List<string>>();
                 {
                     HashSet<string> fnames = new HashSet<string>();
-                    foreach (Dictionary<string, object> im in interiors) foreach (object o in J.A(J.G(im, "furniture"))) { string fn = Safe(J.S(J.G(J.O(o), "name"), ""), "", 64); if (fn.Length > 0) fnames.Add(fn); }
+                    foreach (Dictionary<string, object> im in interiors) foreach (object o in J.A(J.G(im, "furniture"))) { string fn = Safe(J.S(J.G(J.O(o), "name"), ""), "", 64); if (fn.Length > 0) fnames.Add(fn); } foreach (Dictionary<string, object> im in interiors) foreach (object o in J.A(J.G(im, "gameDoors"))) { string fn = Safe(J.S(J.G(J.O(o), "name"), ""), "", 64); if (fn.Length > 0) fnames.Add(fn); }          // (and the game's doors and windows in openings)
                     if (fnames.Count > 0 && !string.IsNullOrEmpty(GtaPath))
                     {
                         try

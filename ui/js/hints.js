@@ -67,7 +67,15 @@ window.MLO = window.MLO || {};
         const kind = S.project.kind;
         if (kind === 'game') {
             const GM = M.GameMlo; if (S.tab !== 'game') return null;
-            if (GM.tool.state()) return ['Moving the object', [['Shift', 'No snapping'], ['Release', 'Put it down'], CANCEL]];
+            const st = GM.tool.state(), GE = M.GameEdit;
+            if (GE.room) return ['New room', [['Drag on the floor', 'Its rectangle'], ['Esc', 'Stop']]];
+            if (GE.mode && GE.mode.cut) return ['Cut an opening', [['Click the selected object\'s wall', 'Cut it there'], ['Esc', 'Stop']]];
+            if (GE.mode && GE.mode.faces) return ['Pick faces', [['Click', 'The flat patch'], ['Shift+click', 'Add or take away'], ['X', 'Take them out'], ['Esc', 'Stop']]];
+            if (st === 'draw') return ['Draw walls', [['Drag on the floor', 'A wall from where you press to where you let go'], ['Esc', 'Stop drawing']]];
+            if (st === 'drawing') return ['Drawing a wall', [['Shift', 'Any angle, no snapping'], ['Release', 'Make it'], CANCEL]];
+            if (st === 'wall') return ['Moving the wall', [['Shift', 'No snapping'], ['Release', 'Put it down'], CANCEL]];
+            if (st) return ['Moving the object', [['Shift', 'No snapping'], ['Release', 'Put it down'], CANCEL]];
+            if (M.GameWalls.sel) return ['New wall', [['Drag it', 'Move'], ['X', 'Delete'], ['Esc', 'Select none'], ['Panel', 'Doors, windows, size']]];
             if (GM.chosen) return ['Add ' + GM.chosen, [['Click', 'Put it there'], ['R', 'Turn it 90°'], ['Esc', 'Stop adding']]];
             if (GM.sel != null) return ['Object', [['Drag it', 'Move'], ['R', 'Turn 90°'], ['Shift+R', 'Turn 15°'], ['PageUp / PageDown', 'Raise / lower'], ['Shift+D', 'Duplicate'], ['X', 'Delete'], ['F', 'Look at it'], ['H', 'Hide'], ['Esc', 'Select none']]];
             return ['Interior', [['Click', 'Select an object'], ['Alt+H', 'Show hidden ones again'], ['Ctrl+Z', 'Undo']]];

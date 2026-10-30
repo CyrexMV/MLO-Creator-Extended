@@ -419,6 +419,7 @@ window.MLO = window.MLO || {};
         const verts = [], tris = [];
         built.boxes.forEach(b => {
             const x0 = b[0], y0 = b[1], z0 = b[2], x1 = b[3], y1 = b[4], z1 = b[5], mi = b[6], v = verts.length / 3, o = b[7];
+            if (o && o.stair) return;                                          // (a stair's steps: the game walks on its ramp, below)
             if (o && o.yaw != null) {
                 // a box that is turned about Z: the same 8 corners, turned (the winding stays the same)
                 const c = Math.cos(o.yaw), s = Math.sin(o.yaw), P = (su, sn, z) => [o.cx + su * o.hu * c - sn * o.hn * s, o.cy + su * o.hu * s + sn * o.hn * c, z];
@@ -427,6 +428,8 @@ window.MLO = window.MLO || {};
             const quad = (a, b2, c, d) => { tris.push(v + a, v + b2, v + c, mi, v + c, v + d, v + a, mi); };
             quad(1, 2, 6, 5); quad(3, 0, 4, 7); quad(2, 3, 7, 6); quad(0, 1, 5, 4); quad(4, 5, 6, 7); quad(3, 2, 1, 0);
         });
+        // collision faces of their own: the ramps of the stairs
+        (built.cpolys || []).forEach(t => { const v = verts.length / 3; t.slice(0, 3).forEach(p => verts.push(p[0], p[1], p[2])); tris.push(v, v + 1, v + 2, t[3]); });
         const textures = [...usedTex].map(id => {
             const t = TEX.pixels(id); return { name: id, size: t.size, rgba: M.toB64(new Uint8Array(t.data.buffer, t.data.byteOffset, t.data.byteLength)) };
         });

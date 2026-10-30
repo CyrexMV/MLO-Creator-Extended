@@ -13,7 +13,7 @@ namespace MloCreator
     public static partial class Exporter
     {
         class FitItem { public string File, Model, Kind, Hinge, Id, Mode; public double Cx, Cy, Zb, Yaw, W, D, H, HingeAdj, Inward = -1; public int[] Rot; public bool Mirror; public double[] Hole; }          // (Mirror: the model turned inside out left to right: the second leaf of a double door; Hole: a door's clear opening and HingeAdj its hinge moved into it, see FitBake)
-        class FitDoor { public GroupData G; public DoorData D; public string Name; public V3 Mn, Mx; public double W, D2, H, CenterU, CoreOff, Yaw, BoxW, BoxH, BoxZ, Inward = -1; public int Mat = 70; public string Hinge, Mode; }          // (Mode: "swing", the game's door; "auto", swings both ways by itself, "slide", "lift" (a garage door folding up): moved by client/doors.lua; Inward: the side of the rooms, +1 the front)
+        class FitDoor { public GroupData G; public DoorData D; public string Name; public V3 Mn, Mx; public double W, D2, H, CenterU, CoreOff, Yaw, BoxW, BoxH, BoxZ, Inward = -1; public int Mat = 70; public string Hinge, Mode; }          // (Mode: "swing", the game's door; "auto", swings both ways by itself, "slide", "lift" (sectional garage), "roll" (roller shutter): moved by client/doors.lua; Inward: the side of the rooms, +1 the front)
         class FitResult { public List<FitDoor> Doors = new List<FitDoor>(); public List<string> Credits = new List<string>(); public int Windows; }
 
         static string FitProject(string p) { return Regex.Replace(p ?? "", @"[^A-Za-z0-9 _\-]", "").Trim(); }
@@ -136,7 +136,7 @@ namespace MloCreator
                     // (the leaf, not the knob: the thickness of the body of the model, and how far its middle is from the middle of the depth)
                     double sdv = it.D / Math.Max(gm.D, 1e-6); fd.D2 = Math.Max(0.04, (gm.CoreN1 - gm.CoreN0) * sdv + 0.01); fd.CoreOff = ((gm.CoreN0 + gm.CoreN1) / 2 - (gm.Min[1] + gm.Max[1]) / 2) * sdv;
                     fd.W = it.W; fd.H = it.H; fd.Yaw = it.Yaw; fd.CenterU = (bLo + bHi) / 2 - hu; fd.Hinge = it.Hinge;
-                    fd.BoxW = bHi - bLo; fd.BoxH = zHi - zLo; fd.BoxZ = (zLo + zHi) / 2 - it.H / 2; fd.Mode = it.Mode == "auto" || it.Mode == "slide" || it.Mode == "lift" ? it.Mode : "swing"; fd.Inward = it.Inward;
+                    fd.BoxW = bHi - bLo; fd.BoxH = zHi - zLo; fd.BoxZ = (zLo + zHi) / 2 - it.H / 2; fd.Mode = it.Mode == "auto" || it.Mode == "slide" || it.Mode == "lift" || it.Mode == "roll" ? it.Mode : "swing"; fd.Inward = it.Inward;
                     res.Doors.Add(fd);
                     continue;
                 }
@@ -204,7 +204,7 @@ namespace MloCreator
             s.Append("-- Doors placed in MLO Creator that open by themselves: sliding doors slide aside, swing doors swing away from whoever comes (both ways),\n");
             s.Append("-- garage doors fold up about their top edge and lie under the ceiling.\n");
             s.Append("-- One row per leaf: model, hinge (x, y, z: the entity's origin), the wall's direction (ux, uy), the middle of the leaf from the hinge (cu),\n");
-            s.Append("-- mode ('slide', 'auto' or 'lift'), for a sliding door the side (dir) and the distance (dist) it slides, for a garage door its height (h) and\n");
+            s.Append("-- mode ('slide', 'auto', 'lift' or 'roll'), for a sliding door the side (dir) and the distance (dist) it slides, for a garage door its height (h) and\n");
             s.Append("-- the side it folds to (s: the side of the rooms). Change the radii or the times to taste.\n");
             s.Append("local doors = {\n");
             foreach (string r in rows) s.Append(r + "\n");
@@ -240,6 +240,9 @@ local function place(d)
         local ha, hb = a * 0.5, math.rad(d.bh) * 0.5
         local ax, ay, aw, bz, bw = d.ux * math.sin(ha), d.uy * math.sin(ha), math.cos(ha), math.sin(hb), math.cos(hb)
         SetEntityQuaternion(d.obj, ax * bw + ay * bz, ay * bw - ax * bz, aw * bz, aw * bw)
+    elseif d.mode == 'roll' then
+        -- A roller shutter winds into the lintel without rotating the whole mesh.
+        SetEntityCoordsNoOffset(d.obj, d.bx, d.by, d.bz + d.h * e, false, false, false)
     else
         SetEntityRotation(d.obj, 0.0, 0.0, d.bh + 90.0 * d.side * d.sgn * e, 2, false)
     end
@@ -267,7 +270,7 @@ CreateThread(function()
             for _, d in ipairs(doors) do
                 if not d.obj or not DoesEntityExist(d.obj) then d.obj = find(d) end
                 if d.obj then
-                    local want, who, r = 0.0, nil, d.mode == 'lift' and GARAGE_RADIUS or RADIUS
+                    local want, who, r = 0.0, nil, (d.mode == 'lift' or d.mode == 'roll') and GARAGE_RADIUS or RADIUS
                     for _, p in ipairs(peds) do
                         local px, py = p.x - d.cx, p.y - d.cy
                         if px * px + py * py < r * r and math.abs(p.z - d.z) < 2.5 then want, who = 1.0, p break end
@@ -277,7 +280,7 @@ CreateThread(function()
                         local across = (who.x - d.x) * -d.uy + (who.y - d.y) * d.ux
                         d.side = across >= 0 and -1 or 1
                     end
-                    local step = dt / (d.mode == 'slide' and SLIDE_TIME or (d.mode == 'lift' and GARAGE_TIME or SWING_TIME))
+                    local step = dt / ((d.mode == 'lift' or d.mode == 'roll') and GARAGE_TIME or (d.mode == 'slide' and SLIDE_TIME or SWING_TIME))
                     local t0 = d.t
                     if d.t < want then d.t = math.min(want, d.t + step) elseif d.t > want then d.t = math.max(want, d.t - step) end
                     if d.t ~= t0 then place(d) end

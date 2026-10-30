@@ -26,7 +26,7 @@ mlo_*.glb  -  windows, doors, door frames and window frames made by MLO Creator 
     mlo_windows_classic.glb  Sash two over two, Georgian twelve pane, casement triple, Gothic arch oak, arched wide, half round fanlight, leaded diamond, porthole brass, cottage green
     mlo_windows_more.glb     Picture window, tilt and turn anthracite, bathroom frosted tall, basement hopper, ribbon window, shopfront wide, store display black, glass block, kitchen double red
     mlo_door_*.glb           Panel white, oak, walnut grooved, glass aluminium, half glass, metal, modern dark, French white and oak, glazed black, patio sliding, barn oak, cottage green, louvred white, front navy and red, four panel oak, shaker grey, cream six panel, bathroom frosted, office vision, fire exit, stable teal, glass clear, ribbed walnut, security steel, sliding glass / glass black / oak / white / barn / shop, swing kitchen / cafe
-    mlo_garage_door_*.glb    Sectional, roller shutter, modern, wood
+    mlo_garage_door_*.glb    Sectional, roller shutter, modern, wood, glass, ribbed, red, industrial
     mlo_door_frame_*.glb     White, oak, walnut, black, anthracite, classic white and oak, transom white, sidelights white
     mlo_window_frame_*.glb   White, oak, walnut, anthracite, classic white, stone
     Licence: CC0 1.0 (public domain)  -  free for any use, also commercial, no credit needed

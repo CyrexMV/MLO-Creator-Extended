@@ -20,7 +20,7 @@ if (-not (Test-Path $csc)) { throw "csc.exe not found at $csc (the .NET Framewor
 $out = if ($Out) { Join-Path $here $Out } else { Join-Path $here 'MloCreator.exe' }
 $srcs = Get-ChildItem (Join-Path $here 'src') -Filter *.cs | ForEach-Object { $_.FullName }
 $fw = Split-Path $csc
-$refs = @("/r:$fw\netstandard.dll", "/r:$fw\System.Runtime.dll", '/r:System.dll', '/r:System.Core.dll', '/r:System.Drawing.dll', '/r:System.Windows.Forms.dll', '/r:System.Web.Extensions.dll', '/r:System.Xml.dll', "/r:$lib\CodeWalker.Core.dll", "/r:$lib\SharpDX.Mathematics.dll", "/r:$lib\SharpDX.dll", "/r:$lib\Microsoft.Web.WebView2.Core.dll", "/r:$lib\Microsoft.Web.WebView2.WinForms.dll")
+$refs = @("/r:$fw\netstandard.dll", "/r:$fw\System.Runtime.dll", '/r:System.dll', '/r:System.Core.dll', '/r:System.Drawing.dll', '/r:System.Windows.Forms.dll', '/r:System.Web.Extensions.dll', '/r:System.Xml.dll', '/r:System.IO.Compression.dll', '/r:System.IO.Compression.FileSystem.dll', "/r:$lib\CodeWalker.Core.dll", "/r:$lib\SharpDX.Mathematics.dll", "/r:$lib\SharpDX.dll", "/r:$lib\Microsoft.Web.WebView2.Core.dll", "/r:$lib\Microsoft.Web.WebView2.WinForms.dll")
 if (-not $Out) { Get-Process MloCreator -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $out } | Stop-Process -Force }
 # x64 (WebView2Loader.dll is the 64-bit one), with the icon and the manifest (sharp on a scaled display)
 & $csc /nologo /target:winexe /platform:x64 /optimize+ /warn:3 "/win32icon:$here\src\app.ico" "/win32manifest:$here\src\app.manifest" /out:$out $refs $srcs

@@ -16,7 +16,7 @@ window.MLO = window.MLO || {};
 
     B.search = async function (q) {
         B.q = q = (q || '').trim(); if (!q || B.busy) return;
-        B.busy = true; B.err = ''; B.status = ''; B.open = {}; B.more = {}; render();
+        B.busy = true; B.err = ''; B.status = ''; B.open = {}; B.more = {}; B.resource = null; render();
         const poll = setInterval(async () => { try { const s = await Model.api('vanilla/status'); if (s.status && s.status !== B.status) { B.status = s.status; const st = document.getElementById('bsearch-status'); if (st) st.textContent = s.status; } } catch (e) { } }, 500);
         try { const r = await Model.api('buildings/search', 'POST', { q, gta: '' }); if (r.ok === false) throw new Error(r.error); B.results = r.results || []; }
         catch (e) { B.err = e.message; B.results = null; }
@@ -55,14 +55,15 @@ window.MLO = window.MLO || {};
     B.openInEditor = async function (r, btn) {
         if (btn) { btn.disabled = true; btn.textContent = 'Reading the interior...'; }
         try {
-            const res = await Model.api('buildings/interior', 'POST', { ytyp: r.ytyp, hash: r.hash, gta: '' }); if (res.ok === false) throw new Error(res.error);
-            const it = res.interior, tw = twins(r, B.results || []); B.shown = false; M.UI.closeModal();
+            // (an interior of an MLO resource: read from its folder, whose map files are copied first, see ResourceMlo.cs)
+            const res = await Model.api('buildings/interior', 'POST', r.src ? { ytyp: r.ytyp, hash: r.hash, src: r.src, snapshot: true, gta: '' } : { ytyp: r.ytyp, hash: r.hash, gta: '' }); if (res.ok === false) throw new Error(res.error);
+            const it = res.interior, tw = r.src ? [] : twins(r, B.results || []); B.shown = false; M.UI.closeModal();
             it.entities.forEach((e, i) => { e.o = i; });                     // (each object's place in the game's list: the export finds the game's own entry by it)
             await Model.createProject(r.place || it.name, 'game', P => {
                 Object.assign(P.game, { name: it.name, hash: it.hash, ytyp: it.ytyp, ymaps: r.ymaps || [], place: r.place || '', world: { x: r.x, y: r.y, z: r.z, heading: r.heading || 0 },
-                    rooms: it.rooms, portals: it.portals, entities: it.entities, sets: it.sets, setsOn: [], twin: tw.join(', ') });
+                    rooms: it.rooms, portals: it.portals, entities: it.entities, sets: it.sets, setsOn: [], twin: tw.join(', '), src: it.src || '', snap: it.snap || '' });
             });
-            toast('Opened ' + it.name + ': ' + it.entities.length + ' objects in ' + it.rooms.length + ' rooms. The models are read from the game now.', 'ok');
+            toast('Opened ' + it.name + ': ' + it.entities.length + ' objects in ' + it.rooms.length + ' rooms. The models are read from the ' + (r.src ? 'resource and the game' : 'game') + ' now.', 'ok');
         } catch (e) { toast('Could not open it: ' + e.message, 'err'); if (btn) { btn.disabled = false; btn.textContent = 'Open in the editor'; } }
     };
     function exteriorItem(r) {
@@ -74,6 +75,31 @@ window.MLO = window.MLO || {};
             el('div', { class: 'row wrap' }, el('button', { class: 'btn sm', onclick: () => copy(vec(ms[0] || r), 'the position') }, 'Copy position'), ms[0] ? el('button', { class: 'btn sm', onclick: () => copy(ms[0].name, 'the model name') }, 'Copy model name') : null));
     }
 
+    // ---------- an MLO made elsewhere: a FiveM resource folder (Buildings.OpenResource), its interiors listed like the game's ----------
+    B.openResource = async function () {
+        if (B.busy) return; B.busy = true; B.err = ''; B.status = 'Pick the resource folder in the window that opened...'; render();
+        try {
+            const r = await Model.api('buildings/open-resource', 'POST', { gta: '' });
+            if (r.ok === false && !r.cancelled) throw new Error(r.error);
+            if (!r.cancelled) { r.interiors.forEach(it => { it.src = r.dir; it.place = r.resource; }); B.resource = r; B.results = null; }
+        } catch (e) { B.err = e.message; }
+        B.busy = false; B.status = ''; render();
+    };
+    function resourceBox(R) {
+        const box = el('div', { class: 'plist', style: { maxHeight: '52vh' } }, el('div', { class: 'h', style: { margin: '10px 0 2px' } }, 'Resource ' + R.resource),
+            el('div', { class: 'note' }, R.dir + ' · ' + R.interiors.length + ' interior' + (R.interiors.length === 1 ? '' : 's') + ' · ' + R.models + ' models of its own'));
+        R.interiors.forEach(it => {
+            box.append(el('div', { class: 'pitem', style: { display: 'block', cursor: 'default' } },
+                el('div', null, el('b', null, it.name), el('span', { class: 'note' }, '  ' + it.rooms + ' room' + (it.rooms === 1 ? '' : 's') + ' · ' + it.entities + ' objects · ' + it.portals + ' portal' + (it.portals === 1 ? '' : 's'))),
+                el('div', { class: 'note' }, 'Defined in ', el('b', null, it.ytyp), it.ymaps.length ? [', placed by ', el('b', null, it.ymaps.join(', '))] : (it.game ? ', placed by the game (the resource changes an interior of the game)' : ''), ' at ' + f2(it.x) + ', ' + f2(it.y) + ', ' + f2(it.z)),
+                it.roomNames && it.roomNames.length ? el('div', { class: 'note' }, 'Rooms: ', it.roomNames.join(', ')) : null,
+                el('div', { class: 'row wrap' }, el('button', { class: 'btn sm primary', onclick: (ev) => B.openInEditor(it, ev.target) }, 'Open in the editor'))));
+        });
+        (R.warnings || []).forEach(w => box.append(el('div', { class: 'note bad' }, w)));
+        box.append(el('div', { class: 'note' }, 'Saving the project writes your changes back into this folder; the whole folder is zipped next to it first, as a backup.'));
+        return box;
+    }
+
     // (only while the window is open: a search that ends after it was closed leaves it closed)
     function render(force) {
         const m = document.getElementById('modal'); if (!B.shown || !m || (m.hidden && !force)) return;
@@ -81,9 +107,12 @@ window.MLO = window.MLO || {};
         const body = el('div', { class: 'dlg wide' }, el('h2', null, 'Building of the game'),
             el('div', { class: 'note' }, 'Find a building of GTA V: a place by name (English or German), an interior by its name or rooms, or a point (x y). The game\'s files are read from your GTA V folder; the first search builds a list of its interiors (about a minute).'),
             el('div', { class: 'row' }, q, el('button', { class: 'btn sm primary', disabled: B.busy ? true : null, onclick: () => B.search(q.value) }, B.busy ? 'Searching...' : 'Search')),
-            el('div', { class: 'row wrap' }, ...QUICK.map(c => el('button', { class: 'chip' + (B.q === c[1] ? ' on' : ''), onclick: () => B.search(c[1]) }, c[0]))));
+            el('div', { class: 'row wrap' }, ...QUICK.map(c => el('button', { class: 'chip' + (B.q === c[1] ? ' on' : ''), onclick: () => B.search(c[1]) }, c[0]))),
+            el('div', { class: 'row wrap' }, el('button', { class: 'btn sm', disabled: B.busy ? true : null, title: 'An MLO made elsewhere (a FiveM resource with its stream folder): open it again to change it', onclick: () => B.openResource() }, 'Open an MLO resource...'),
+                el('span', { class: 'note' }, 'a finished MLO of yours (not encrypted by asset escrow)')));
         if (B.busy) body.append(el('div', { class: 'note', id: 'bsearch-status' }, B.status || 'Searching...'));
         if (B.err) body.append(el('div', { class: 'note bad' }, B.err));
+        if (B.resource && !B.busy && !B.results) body.append(resourceBox(B.resource));
         if (B.results && !B.busy) {
             const list = B.results;
             if (!list.length) body.append(el('div', { class: 'note' }, 'Nothing found for "' + B.q + '". Try another word, an interior\'s name (v_...) or a point.'));

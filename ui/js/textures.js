@@ -220,14 +220,15 @@ window.MLO = window.MLO || {};
             return Promise.all(TEX.PHOTOS.map(p => new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = 'tex/' + p.file; })))
                 .then(ims => { TEX.PHOTOS.forEach((p, i) => { if (ims[i]) { try { TEX.addPhoto(p, ims[i]); } catch (e) { M.Errors.report('textures', e, { quiet: true }); } } }); });
         },
-        // images the user brought: drawn to the same size as the built-in textures, listed under "Mine"
+        // images the user brought, listed under "Mine": 512 x 512 when the picture is that big (like the photos), else 256 x 256
         addUser(id, name, tile, source) {
-            const c = document.createElement('canvas'); c.width = c.height = SIZE; const x = c.getContext('2d');
-            x.drawImage(source, 0, 0, SIZE, SIZE); const img = x.getImageData(0, 0, SIZE, SIZE), d = img.data; let r = 0, g = 0, b = 0;
+            const w = Math.min(source.naturalWidth || source.width, source.naturalHeight || source.height), Z = w >= 512 ? 512 : SIZE;
+            const c = document.createElement('canvas'); c.width = c.height = Z; const x = c.getContext('2d');
+            x.drawImage(source, 0, 0, Z, Z); const img = x.getImageData(0, 0, Z, Z), d = img.data; let r = 0, g = 0, b = 0;
             for (let i = 0; i < d.length; i += 4) { d[i + 3] = 255; r += d[i]; g += d[i + 1]; b += d[i + 2]; }
-            const n = SIZE * SIZE, o = { id, name, cat: 'Mine', tile: tile || 1, kind: 'user', params: null, col: 1 };
+            const n = Z * Z, o = byId[id] && byId[id].kind === 'user' ? Object.assign(byId[id], { name, tile: tile || 1 }) : { id, name, cat: 'Mine', tile: tile || 1, kind: 'user', params: null, col: 1 };
             if (!byId[id]) TEX.list.push(o); byId[id] = o; if (cats.indexOf('Mine') < 0) cats.push('Mine');
-            cache[id] = { id, def: o, size: SIZE, data: d, avg: [r / n / 255, g / n / 255, b / n / 255] };
+            cache[id] = { id, def: o, size: Z, data: d, avg: [r / n / 255, g / n / 255, b / n / 255] };
             if (TEX.gl[id]) delete TEX.gl[id]; return o;
         },
         clearUser() {
@@ -238,9 +239,9 @@ window.MLO = window.MLO || {};
             TEX.clearUser();
             return Promise.all((list || []).map(t => new Promise(res => { const im = new Image(); im.onload = () => { TEX.addUser(t.id, t.name, t.tile, im); res(); }; im.onerror = () => res(); im.src = t.url; })));
         },
-        // the 256 x 256 picture as a PNG for saving with the project
+        // the picture (256 or 512 square) as a PNG for saving with the project
         userUrl(id) {
-            const t = cache[id]; if (!t) return ''; const c = document.createElement('canvas'); c.width = c.height = SIZE; c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(t.data), SIZE, SIZE), 0, 0); return c.toDataURL('image/png');
+            const t = cache[id]; if (!t) return ''; const c = document.createElement('canvas'); c.width = c.height = t.size; c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(t.data), t.size, t.size), 0, 0); return c.toDataURL('image/png');
         }
     };
     M.TEX = TEX;

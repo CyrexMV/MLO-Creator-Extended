@@ -272,8 +272,8 @@ window.MLO = window.MLO || {};
         const status = el('div', { class: 'note', style: { minHeight: '16px' } });
         const btn = el('button', { class: 'btn sm', onclick: () => PL.lookup(status, btn) }, L.length ? 'Look up again' : 'Look up');
         if (I.target && I.entity) root.append(el('div', { class: 'row wrap' }, btn), status);
-        else root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, 'Set where the model stands (below) first.'));
-        if (PL.err) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, PL.err));
+        else root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, 'Set where the model stands (below) first.'));
+        if (PL.err) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, PL.err));
         // the models themselves in the view, so you can see what is going to be removed
         root.append(chk('Show the models in the view', () => PL.shows(), v => { Model.edit(Q => { Q.import.plantsShow = v; }); IM.rebuild(); if (v) PL.fetchModels(); M.UI.renderLeft(); }));
         if (PL.shows()) {
@@ -371,9 +371,9 @@ window.MLO = window.MLO || {};
         const I = imp(), L = list(), items = PL._items, sel = items.filter(i => PL.picks.has(i.id));
         const chk = (label, get, set) => el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: get() ? true : null, onchange: (e) => set(e.target.checked) }), label);
         const status = el('div', { class: 'note', style: { minHeight: '16px' } }), lb = el('button', { class: 'btn sm' + (L.length ? '' : ' primary'), onclick: () => PL.lookup(status, lb) }, L.length ? 'Look up again' : 'Look up props and plants');
-        if (!I.entity) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, 'Set where the model stands first (Import tab).'));
+        if (!I.entity) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, 'Set where the model stands first (Import tab).'));
         else root.append(el('div', { class: 'row wrap' }, lb), status);
-        if (PL.err) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, PL.err));
+        if (PL.err) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, PL.err));
         if (L.length && L.some(p => !p.q)) root.append(el('div', { class: 'note', style: { color: '#f0c674' } }, 'Old lookup: look up again.'));
         // what to show: vegetation, props, small pieces of the model files
         const K = PL.kinds(), kindChk = (cat, label) => chk(label + ' (' + items.filter(i => i.cat === cat).length + ')', () => !!K[cat], v => { S.propKinds = Object.assign({}, PL.kinds(), { [cat]: v }); PL.picks = new Set([...PL.picks].filter(id => { const it = PL._items.find(q => q.id === id); return !it || it.cat !== cat || v; })); IM.rebuild(); M.UI.renderLeft(); });

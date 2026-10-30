@@ -24,15 +24,20 @@ window.MLO = window.MLO || {};
     // ---------- the models: name -> { geoms: [{ pos, nrm, uv, idx, tex }], bmin, bmax } or { error } ----------
     const models = new Map(), loading = new Set(), texs = new Map();         // texs: 'fu:' + name -> { w, h, rgba } (kept here: loading the building's model empties IM.textures)
     FU.model = (n) => models.get(n) || null;
+    // every piece of furniture's model read (on every floor of every building): the export needs them for the collision of the ones that carry none
+    FU.whenLoaded = async function () {
+        const names = []; Model.bldAll(S.project).forEach(b => Model.levelsOf(b.d).forEach(lv => ((lv.shell && lv.shell.furniture) || []).forEach(f => names.push(f.n))));
+        await FU.ensure(names); for (let i = 0; i < 300 && names.some(n => !models.has(n)); i++) await new Promise(r => setTimeout(r, 100));
+    };
     FU.ensure = async function (names) {
         const need = [...new Set(names)].filter(n => !models.has(n) && !loading.has(n)); if (!need.length) return;
         need.forEach(n => loading.add(n));
         try {
-            const r = await Model.api('import/furniture-models?name=' + safe(), 'POST', { names: need, gta: '' }), ms = r.models || {};
+            const r = await Model.api('import/furniture-models?name=' + safe(), 'POST', { names: need, gta: '' }), ms = r.models || {}; if (r.serverBuild) M.UI.serverBuild = r.serverBuild;
             need.forEach(n => {
                 const d = ms[n]; if (!d || d.error) { models.set(n, { error: (d && d.error) || 'not found' }); return; }
                 (d.textures || []).forEach(t => texs.set('fu:' + t.name, { w: t.w, h: t.h, rgba: bytes(t.rgba) }));
-                const mm = { bmin: d.bmin, bmax: d.bmax, geoms: d.geoms.map(g => ({ tex: (g.tex || '').toLowerCase(), pos: f32(g.pos), nrm: f32(g.nrm), uv: f32(g.uv), idx: u16(g.idx) })) }; mm.rest = restOf(mm); models.set(n, mm);
+                const mm = { bmin: d.bmin, bmax: d.bmax, dlc: d.dlc || '', build: d.build || 0, lights: d.lights || [], frag: !!d.frag, col: d.col !== false, colBoxes: d.colBoxes || null, geoms: d.geoms.map(g => ({ tex: (g.tex || '').toLowerCase(), pos: f32(g.pos), nrm: f32(g.nrm), uv: f32(g.uv), idx: u16(g.idx) })) }; mm.rest = restOf(mm); models.set(n, mm);
             });
         } catch (e) { need.forEach(n => models.set(n, { error: e.message })); FU.err = e.message; }
         need.forEach(n => loading.delete(n)); bake.clear(); settleOld();
@@ -200,8 +205,9 @@ window.MLO = window.MLO || {};
         root.append(el('div', { class: 'h' }, 'Find furniture in the game'));
         root.append(el('div', { class: 'row' }, q, el('button', { class: 'btn sm primary', disabled: FU.busy ? true : null, onclick: () => FU.search(q.value) }, FU.busy ? 'Searching...' : 'Search')));
         root.append(el('div', { class: 'row wrap' }, ...CATS.map(c => el('button', { class: 'btn sm' + (FU.query === c[1] ? ' on' : ''), onclick: () => FU.search(c[1]) }, c[0]))));
+        root.append(M.UI.myPropsRow(n => FU.choose(n)));
         if (FU.busy) root.append(el('div', { class: 'note' }, 'The first search reads the game archives (about 15 seconds).'));
-        if (FU.err) root.append(el('div', { class: 'note', style: { color: '#f0a4a3' } }, FU.err));
+        if (FU.err) root.append(el('div', { class: 'note', style: { color: '#ffb3c2' } }, FU.err));
         if (FU.results) {
             root.append(el('div', { class: 'note' }, FU.results.length ? FU.results.length + (FU.results.length >= 400 ? '+' : '') + ' models. Choose one, then click the floor to put it there.' : 'No model of the game has that in its name.'));
             const box = el('div', { class: 'plist', style: { maxHeight: '220px' } });
@@ -221,6 +227,8 @@ window.MLO = window.MLO || {};
             root.append(el('div', { class: 'row wrap' }, el('button', { class: 'btn sm', title: 'R', onclick: () => FU.turn(sel.id, 90) }, 'Turn 90°'), el('button', { class: 'btn sm', onclick: () => FU.turn(sel.id, -15) }, '-15°'), el('button', { class: 'btn sm', title: 'Shift+R', onclick: () => FU.turn(sel.id, 15) }, '+15°'),
                 el('button', { class: 'btn sm', title: 'What it stands on (its feet, its base) on the floor', onclick: () => FU.edit(sel.id, f => { f.z = footZ(models.get(f.n)); }) }, 'On the floor'),
                 el('button', { class: 'btn sm', title: 'Shift+D', onclick: () => FU.duplicate(sel.id) }, 'Duplicate'), el('button', { class: 'btn sm danger', title: 'X', onclick: () => FU.remove(sel.id) }, 'Delete')));
+            const bn = M.UI.buildNote(models.get(sel.n)); if (bn) root.append(bn);
+            M.PropLights.panel(root, sel.n, models.get(sel.n));                 // (the lights built into it: a lamp's)
         }
         // everything placed in this building
         const items = list();
